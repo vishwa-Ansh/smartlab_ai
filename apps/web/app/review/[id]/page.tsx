@@ -1,228 +1,273 @@
 "use client";
 
 import {
-  useState,
-} from "react";
-
-import Link from "next/link";
-
-import {
-  ArrowLeft,
-  CheckCircle2,
   AlertCircle,
-  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  Clock3,
   Code2,
   FileCode2,
+  GitCompare,
+  Loader2,
   Play,
+  RefreshCw,
   Sparkles,
   Terminal,
-  Clock3,
-  Loader2,
-  XCircle,
+  TriangleAlert,
+  X,
+  Zap,
 } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
 import Sidebar from "@/components/Sidebar";
 
 import {
   createReview,
+  fixCode,
+  type AgentResponse,
+  type Issue,
 } from "@/lib/api";
 
-type ReviewResult = {
-  score: number;
-
-  syntax: {
-    status: "passed" | "failed";
-    message: string;
-  };
-
-  tests: {
-    passed: number;
-    total: number;
-    cases: Array<{
-      name: string;
-      input: string;
-      expected: string;
-      actual: string;
-      status: "passed" | "failed";
-    }>;
-  };
-
-  complexity: {
-    time: string;
-    space: string;
-    explanation: string;
-  };
-
-  issues: Array<{
-    type: "error" | "warning" | "info";
-    title: string;
-    description: string;
-    line?: number;
-  }>;
-
-  metrics: {
-    lines: number;
-    codeLines: number;
-    functions: number;
-    comments: number;
-  };
-
-  aiReview: string[];
-};
+const starterCode = `def add(a, b):
+    return a - b`;
 
 export default function ReviewPage() {
-  const [code, setCode] = useState(
-`def add(a, b):
-    return a + b`
-  );
+  const [code, setCode] =
+    useState(starterCode);
 
   const [language, setLanguage] =
     useState("python");
 
   const [fileName, setFileName] =
-    useState("solution.py");
+    useState("main.py");
 
-  const [loading, setLoading] =
+  const [reviewLoading, setReviewLoading] =
     useState(false);
+
+  const [fixLoading, setFixLoading] =
+    useState(false);
+
+  const [review, setReview] =
+    useState<any>(null);
+
+  const [agentResult, setAgentResult] =
+    useState<AgentResponse | null>(null);
 
   const [error, setError] =
     useState("");
 
-  const [result, setResult] =
-    useState<ReviewResult | null>(null);
+  const [applied, setApplied] =
+    useState(false);
+
+  const [activeTab, setActiveTab] =
+    useState<"review" | "diff">(
+      "review"
+    );
 
   async function handleReview() {
     if (!code.trim()) {
-      setError("Please enter your code.");
+      setError(
+        "Please enter some code first."
+      );
       return;
     }
 
-    setLoading(true);
     setError("");
-    setResult(null);
+    setReview(null);
+    setAgentResult(null);
+    setApplied(false);
+    setReviewLoading(true);
 
     try {
-      const response =
+      const result =
         await createReview(
           code,
           language,
           fileName
         );
 
-      if (!response.success) {
-        throw new Error(
-          response.message ||
-            "Review failed."
-        );
-      }
-
-      if (!response.review) {
-        throw new Error(
-          "Backend returned no review result."
-        );
-      }
-
-      setResult(
-        response.review
-      );
+      setReview(result.review || null);
     } catch (err) {
-      console.error(err);
-
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to review code."
+          : "Review failed."
       );
     } finally {
-      setLoading(false);
+      setReviewLoading(false);
     }
   }
 
-  return (
-    <div className="min-h-screen bg-[#08090b] text-white">
+  async function handleFix() {
+    if (!code.trim()) {
+      setError(
+        "Please enter some code first."
+      );
+      return;
+    }
 
+    setError("");
+    setApplied(false);
+    setFixLoading(true);
+    setAgentResult(null);
+
+    try {
+      const issues: Issue[] =
+        review?.issues || [];
+
+      const result =
+        await fixCode(
+          code,
+          language,
+          issues
+        );
+
+      setAgentResult(result);
+
+      if (result.success) {
+        setActiveTab("diff");
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "SmartLab could not fix the code."
+      );
+    } finally {
+      setFixLoading(false);
+    }
+  }
+
+  function handleApplyFix() {
+    if (
+      !agentResult?.patch?.fixedCode
+    ) {
+      return;
+    }
+
+    if (
+      !agentResult.verification?.verified
+    ) {
+      setError(
+        "This patch has not passed verification."
+      );
+      return;
+    }
+
+    setCode(
+      agentResult.patch.fixedCode
+    );
+
+    setApplied(true);
+    setReview(null);
+    setAgentResult(null);
+    setActiveTab("review");
+    setError("");
+  }
+
+  function handleRejectFix() {
+    setAgentResult(null);
+    setApplied(false);
+    setActiveTab("review");
+  }
+
+  return (
+    <div className="min-h-screen bg-[#09090b] text-zinc-100">
       <Sidebar />
 
-      <main className="lg:pl-64">
-
-        <header className="sticky top-0 z-40 h-16 border-b border-white/[0.07] bg-[#08090b]/85 backdrop-blur-xl">
-
-          <div className="flex h-full items-center justify-between px-5 sm:px-8">
-
-            <div className="flex items-center gap-3">
-
+      <main className="ml-64 min-h-screen">
+        <div className="mx-auto max-w-[1500px] px-8 py-8">
+          <div className="mb-8 flex items-center justify-between">
+            <div>
               <Link
                 href="/"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] text-zinc-500 transition hover:text-white"
+                className="mb-4 inline-flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-300"
               >
-                <ArrowLeft size={16} />
+                <ChevronLeft
+                  size={16}
+                />
+                Dashboard
               </Link>
 
-              <div>
-
-                <div className="text-sm font-medium text-zinc-200">
-                  Review Code
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
+                  <Sparkles
+                    size={20}
+                    className="text-white"
+                  />
                 </div>
 
-                <div className="text-xs text-zinc-600">
-                  SmartLab AI
-                </div>
+                <div>
+                  <h1 className="text-2xl font-semibold tracking-tight">
+                    Code Review
+                  </h1>
 
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Analyze, debug and fix your code with SmartLab AI.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                Agent Ready
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+              <AlertCircle
+                size={18}
+                className="mt-0.5 shrink-0"
+              />
+
+              <div className="flex-1">
+                {error}
               </div>
 
+              <button
+                onClick={() =>
+                  setError("")
+                }
+                className="text-red-400 transition hover:text-red-200"
+              >
+                <X size={16} />
+              </button>
             </div>
+          )}
 
-            <div className="flex items-center gap-2 text-xs text-zinc-600">
-
-              <Sparkles size={14} />
-
-              Real Docker Execution
-
-            </div>
-
-          </div>
-
-        </header>
-
-        <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8">
-
-          <div className="mb-8">
-
-            <div className="mb-3 flex items-center gap-2 text-xs text-zinc-600">
-
-              <Code2 size={13} />
+          {applied && (
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
+              <CheckCircle2
+                size={18}
+              />
 
               <span>
-                SmartLab Code Analysis
+                Verified SmartLab fix applied to the editor.
               </span>
-
             </div>
+          )}
 
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Review your code
-            </h1>
-
-            <p className="mt-2 max-w-2xl text-sm text-zinc-500">
-              Analyze syntax, execute real test cases,
-              inspect complexity and detect potential
-              issues in your code.
-            </p>
-
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-
-            <section className="overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
-
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(420px,0.7fr)]">
+            <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
+              <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
                 <div className="flex items-center gap-3">
-
-                  <FileCode2
-                    size={16}
-                    className="text-zinc-500"
+                  <Code2
+                    size={18}
+                    className="text-zinc-400"
                   />
 
+                  <span className="text-sm font-medium">
+                    Source Code
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <input
                     value={fileName}
                     onChange={(e) =>
@@ -230,48 +275,73 @@ export default function ReviewPage() {
                         e.target.value
                       )
                     }
-                    className="w-52 bg-transparent text-sm font-medium text-zinc-300 outline-none placeholder:text-zinc-700"
-                    placeholder="solution.py"
+                    className="w-36 rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-300 outline-none transition focus:border-white/20"
                   />
 
+                  <select
+                    value={language}
+                    onChange={(e) => {
+                      const value =
+                        e.target.value;
+
+                      setLanguage(value);
+
+                      if (
+                        value === "python"
+                      ) {
+                        setFileName(
+                          "main.py"
+                        );
+                      }
+
+                      if (
+                        value ===
+                        "javascript"
+                      ) {
+                        setFileName(
+                          "main.js"
+                        );
+                      }
+
+                      if (
+                        value === "typescript"
+                      ) {
+                        setFileName(
+                          "main.ts"
+                        );
+                      }
+
+                      if (
+                        value === "cpp"
+                      ) {
+                        setFileName(
+                          "main.cpp"
+                        );
+                      }
+                    }}
+                    className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-300 outline-none"
+                  >
+                    <option value="python">
+                      Python
+                    </option>
+
+                    <option value="javascript">
+                      JavaScript
+                    </option>
+
+                    <option value="typescript">
+                      TypeScript
+                    </option>
+
+                    <option value="cpp">
+                      C++
+                    </option>
+                  </select>
                 </div>
-
-                <select
-                  value={language}
-                  onChange={(e) =>
-                    setLanguage(
-                      e.target.value
-                    )
-                  }
-                  className="rounded-lg border border-white/[0.07] bg-[#111317] px-3 py-2 text-xs text-zinc-300 outline-none"
-                >
-                  <option value="python">
-                    Python
-                  </option>
-
-                  <option value="javascript">
-                    JavaScript
-                  </option>
-
-                  <option value="typescript">
-                    TypeScript
-                  </option>
-
-                  <option value="cpp">
-                    C++
-                  </option>
-
-                  <option value="java">
-                    Java
-                  </option>
-                </select>
-
               </div>
 
               <div className="relative">
-
-                <div className="absolute left-0 top-0 w-12 select-none border-r border-white/[0.04] bg-[#050608] py-5 text-right font-mono text-xs leading-6 text-zinc-800">
-
+                <div className="absolute left-0 top-0 w-12 select-none border-r border-white/5 bg-black/10 py-5 text-right font-mono text-xs leading-6 text-zinc-700">
                   {code
                     .split("\n")
                     .map(
@@ -284,7 +354,6 @@ export default function ReviewPage() {
                         </div>
                       )
                     )}
-
                 </div>
 
                 <textarea
@@ -295,743 +364,738 @@ export default function ReviewPage() {
                     )
                   }
                   spellCheck={false}
-                  className="min-h-[560px] w-full resize-none bg-[#050608] py-5 pl-16 pr-5 font-mono text-xs leading-6 text-zinc-400 outline-none"
-                  placeholder="Write your code here..."
+                  className="min-h-[620px] w-full resize-none bg-transparent py-5 pl-16 pr-6 font-mono text-[13px] leading-6 text-zinc-200 outline-none"
+                  placeholder="Write or paste your code here..."
                 />
-
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-4 border-t border-white/[0.07] px-5 py-4">
-
-                <div className="flex items-center gap-2 text-xs text-zinc-600">
-
-                  <Terminal size={14} />
-
-                  <span>
-                    Sandboxed execution
+              <div className="flex items-center justify-between border-t border-white/10 px-5 py-4">
+                <div className="flex items-center gap-4 text-xs text-zinc-500">
+                  <span className="flex items-center gap-1.5">
+                    <FileCode2
+                      size={14}
+                    />
+                    {code.split("\n").length} lines
                   </span>
 
+                  <span>
+                    {language}
+                  </span>
                 </div>
 
-                <button
-                  onClick={handleReview}
-                  disabled={loading}
-                  className="flex h-9 items-center gap-2 rounded-lg bg-white px-4 text-xs font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-
-                  {loading ? (
-                    <>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleReview}
+                    disabled={
+                      reviewLoading ||
+                      fixLoading
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {reviewLoading ? (
                       <Loader2
-                        size={14}
+                        size={16}
                         className="animate-spin"
                       />
+                    ) : (
+                      <RefreshCw
+                        size={16}
+                      />
+                    )}
 
-                      Running analysis...
-                    </>
-                  ) : (
-                    <>
-                      <Play size={14} />
+                    Review Code
+                  </button>
 
-                      Review Code
-                    </>
-                  )}
+                  <button
+                    onClick={handleFix}
+                    disabled={
+                      fixLoading ||
+                      reviewLoading
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {fixLoading ? (
+                      <Loader2
+                        size={16}
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <Sparkles
+                        size={16}
+                      />
+                    )}
 
+                    Fix Code
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
+              <div className="flex items-center border-b border-white/10">
+                <button
+                  onClick={() =>
+                    setActiveTab(
+                      "review"
+                    )
+                  }
+                  className={`flex items-center gap-2 px-5 py-4 text-sm transition ${
+                    activeTab === "review"
+                      ? "border-b border-white text-white"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  <Terminal
+                    size={16}
+                  />
+                  Review
                 </button>
 
+                <button
+                  onClick={() =>
+                    setActiveTab(
+                      "diff"
+                    )
+                  }
+                  disabled={
+                    !agentResult?.patch
+                  }
+                  className={`flex items-center gap-2 px-5 py-4 text-sm transition ${
+                    activeTab === "diff"
+                      ? "border-b border-white text-white"
+                      : "text-zinc-500 hover:text-zinc-300 disabled:cursor-not-allowed disabled:opacity-30"
+                  }`}
+                >
+                  <GitCompare
+                    size={16}
+                  />
+                  Fix / Diff
+                </button>
               </div>
 
-            </section>
-
-            <section className="space-y-6">
-
-              <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-
-                <div className="flex items-center gap-3">
-
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/[0.05] text-zinc-400">
-
-                    <Sparkles size={16} />
-
-                  </div>
-
-                  <div>
-
-                    <h2 className="text-sm font-semibold">
-                      SmartLab Analysis
-                    </h2>
-
-                    <p className="mt-1 text-xs text-zinc-600">
-                      Automated code evaluation
-                    </p>
-
-                  </div>
-
-                </div>
-
-                <div className="mt-6 space-y-4">
-
-                  <Feature
-                    icon={
-                      <CheckCircle2
-                        size={15}
-                      />
-                    }
-                    title="Syntax Analysis"
-                    description="Checks whether the submitted code is syntactically valid."
-                  />
-
-                  <Feature
-                    icon={
-                      <Play size={15} />
-                    }
-                    title="Real Execution"
-                    description="Runs supported code inside an isolated Docker container."
-                  />
-
-                  <Feature
-                    icon={
-                      <Terminal size={15} />
-                    }
-                    title="Test Cases"
-                    description="Compares actual program output with expected results."
-                  />
-
-                  <Feature
-                    icon={
-                      <Clock3 size={15} />
-                    }
-                    title="Complexity"
-                    description="Analyzes estimated time and space complexity."
-                  />
-
-                  <Feature
-                    icon={
-                      <AlertTriangle
-                        size={15}
-                      />
-                    }
-                    title="Issue Detection"
-                    description="Reports potential bugs, warnings and edge cases."
-                  />
-
-                </div>
-
-              </div>
-
-              {error && (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-5">
-
-                  <div className="flex gap-3">
-
-                    <XCircle
-                      size={17}
-                      className="mt-0.5 shrink-0 text-red-400"
-                    />
-
-                    <div>
-
-                      <div className="text-sm font-medium text-red-300">
-                        Review failed
-                      </div>
-
-                      <p className="mt-1 text-xs leading-5 text-red-400/70">
-                        {error}
-                      </p>
-
-                    </div>
-
-                  </div>
-
-                </div>
-              )}
-
-              {result && (
-                <QuickResult
-                  result={result}
+              {activeTab ===
+                "review" && (
+                <ReviewPanel
+                  review={review}
+                  loading={
+                    reviewLoading
+                  }
+                  onFix={
+                    handleFix
+                  }
                 />
               )}
 
+              {activeTab ===
+                "diff" && (
+                <DiffPanel
+                  result={
+                    agentResult
+                  }
+                  onApply={
+                    handleApplyFix
+                  }
+                  onReject={
+                    handleRejectFix
+                  }
+                />
+              )}
             </section>
-
           </div>
-
-          {result && (
-            <ResultSection
-              result={result}
-            />
-          )}
-
         </div>
-
       </main>
-
     </div>
   );
 }
 
-function Feature({
-  icon,
-  title,
-  description,
+function ReviewPanel({
+  review,
+  loading,
+  onFix,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
+  review: any;
+  loading: boolean;
+  onFix: () => void;
 }) {
-  return (
-    <div className="flex gap-3">
-
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-black/20 text-zinc-500">
-        {icon}
-      </div>
-
-      <div>
-
-        <div className="text-xs font-medium text-zinc-300">
-          {title}
+  if (loading) {
+    return (
+      <div className="flex min-h-[620px] flex-col items-center justify-center">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03]">
+          <Loader2
+            size={22}
+            className="animate-spin text-zinc-300"
+          />
         </div>
 
-        <p className="mt-1 text-xs leading-5 text-zinc-600">
-          {description}
+        <p className="text-sm text-zinc-300">
+          SmartLab is analyzing your code...
         </p>
 
+        <p className="mt-2 text-xs text-zinc-600">
+          Syntax · Tests · Complexity · Issues
+        </p>
       </div>
+    );
+  }
 
-    </div>
-  );
-}
-
-function QuickResult({
-  result,
-}: {
-  result: ReviewResult;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-
-      <div className="flex items-center justify-between">
-
-        <div>
-
-          <div className="text-xs text-zinc-600">
-            Current score
-          </div>
-
-          <div className="mt-2 text-3xl font-semibold">
-            {result.score}%
-          </div>
-
+  if (!review) {
+    return (
+      <div className="flex min-h-[620px] flex-col items-center justify-center px-8 text-center">
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]">
+          <Zap
+            size={24}
+            className="text-zinc-400"
+          />
         </div>
 
-        <div
-          className={
-            result.tests.passed ===
-            result.tests.total &&
-            result.syntax.status ===
-              "passed"
-              ? "text-emerald-400"
-              : "text-yellow-400"
+        <h2 className="text-base font-medium text-zinc-200">
+          Ready to review
+        </h2>
+
+        <p className="mt-2 max-w-sm text-sm leading-6 text-zinc-600">
+          Run a code review to detect syntax problems, test failures, complexity issues and potential bugs.
+        </p>
+
+        <button
+          onClick={() =>
+            document
+              .querySelector<HTMLButtonElement>(
+                'button'
+              )
           }
+          className="mt-6 hidden"
         >
-          {result.tests.passed ===
-            result.tests.total &&
-          result.syntax.status ===
-            "passed" ? (
-            <CheckCircle2 size={30} />
-          ) : (
-            <AlertTriangle
-              size={30}
-            />
-          )}
-        </div>
-
+          Review
+        </button>
       </div>
+    );
+  }
 
-      <div className="mt-5 grid grid-cols-2 gap-3">
+  const score =
+    review.score ?? 0;
 
-        <MiniResult
-          label="Syntax"
-          value={
-            result.syntax.status ===
-            "passed"
-              ? "Passed"
-              : "Failed"
+  const passed =
+    review.tests?.passed ?? 0;
+
+  const total =
+    review.tests?.total ?? 0;
+
+  const issues =
+    review.issues || [];
+
+  return (
+    <div className="max-h-[700px] overflow-y-auto p-5">
+      <div className="mb-5 grid grid-cols-2 gap-3">
+        <Metric
+          icon={
+            <CheckCircle2
+              size={17}
+            />
           }
+          label="Score"
+          value={`${score}/100`}
         />
 
-        <MiniResult
+        <Metric
+          icon={
+            <Play size={17} />
+          }
           label="Tests"
-          value={`${result.tests.passed}/${result.tests.total}`}
+          value={`${passed}/${total}`}
         />
 
-        <MiniResult
+        <Metric
+          icon={
+            <Clock3
+              size={17}
+            />
+          }
           label="Time"
           value={
-            result.complexity.time
+            review.complexity
+              ?.time || "—"
           }
         />
 
-        <MiniResult
+        <Metric
+          icon={
+            <Code2
+              size={17}
+            />
+          }
           label="Space"
           value={
-            result.complexity.space
+            review.complexity
+              ?.space || "—"
           }
         />
-
       </div>
 
-    </div>
-  );
-}
+      <div className="mb-5 rounded-xl border border-white/10 bg-black/10 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-medium">
+            Syntax
+          </h3>
 
-function MiniResult({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
+          <StatusBadge
+            passed={
+              review.syntax
+                ?.status ===
+              "passed"
+            }
+          />
+        </div>
 
-      <div className="text-[10px] uppercase tracking-wider text-zinc-700">
-        {label}
+        <p className="text-xs leading-5 text-zinc-500">
+          {review.syntax
+            ?.message ||
+            "No syntax information."}
+        </p>
       </div>
 
-      <div className="mt-2 text-sm font-medium text-zinc-300">
-        {value}
-      </div>
+      <div className="mb-5 rounded-xl border border-white/10 bg-black/10 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-medium">
+            Test Results
+          </h3>
 
-    </div>
-  );
-}
+          <span className="text-xs text-zinc-500">
+            {passed}/{total} passed
+          </span>
+        </div>
 
-function ResultSection({
-  result,
-}: {
-  result: ReviewResult;
-}) {
-  return (
-    <div className="mt-6 space-y-6">
-
-      <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-
-          <div className="border-b border-white/[0.07] p-5">
-
-            <div className="flex items-center gap-2">
-
-              <Terminal
-                size={15}
-                className="text-zinc-500"
-              />
-
-              <h2 className="text-sm font-semibold">
-                Test Results
-              </h2>
-
-            </div>
-
-            <p className="mt-1 text-xs text-zinc-700">
-              {result.tests.passed}/
-              {result.tests.total} test cases passed
-            </p>
-
-          </div>
-
-          <div className="space-y-3 p-5">
-
-            {result.tests.cases.map(
-              (testCase, index) => (
+        {review.tests
+          ?.cases?.length ? (
+          <div className="space-y-2">
+            {review.tests.cases.map(
+              (
+                test: any,
+                index: number
+              ) => (
                 <div
                   key={index}
-                  className="rounded-xl border border-white/[0.06] bg-black/20 p-4"
+                  className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2"
                 >
-
-                  <div className="flex items-center justify-between">
-
-                    <span className="text-xs font-medium text-zinc-300">
-                      {testCase.name}
-                    </span>
-
-                    <span
-                      className={
-                        testCase.status ===
-                        "passed"
-                          ? "flex items-center gap-1 text-[11px] text-emerald-400"
-                          : "flex items-center gap-1 text-[11px] text-red-400"
-                      }
-                    >
-                      {testCase.status ===
-                      "passed" ? (
-                        <CheckCircle2
-                          size={12}
-                        />
-                      ) : (
-                        <XCircle
-                          size={12}
-                        />
-                      )}
-
-                      {testCase.status}
-                    </span>
-
-                  </div>
-
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-
-                    <TestValue
-                      label="Input"
-                      value={
-                        testCase.input
-                      }
-                    />
-
-                    <TestValue
-                      label="Expected"
-                      value={
-                        testCase.expected
-                      }
-                    />
-
-                    <TestValue
-                      label="Actual"
-                      value={
-                        testCase.actual
-                      }
-                    />
-
-                  </div>
-
-                </div>
-              )
-            )}
-
-          </div>
-
-        </div>
-
-        <div className="space-y-6">
-
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-
-            <div className="flex items-center gap-2">
-
-              <Code2
-                size={15}
-                className="text-zinc-500"
-              />
-
-              <h2 className="text-sm font-semibold">
-                Code Metrics
-              </h2>
-
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-
-              <Metric
-                label="Lines"
-                value={
-                  result.metrics.lines
-                }
-              />
-
-              <Metric
-                label="Code Lines"
-                value={
-                  result.metrics.codeLines
-                }
-              />
-
-              <Metric
-                label="Functions"
-                value={
-                  result.metrics.functions
-                }
-              />
-
-              <Metric
-                label="Comments"
-                value={
-                  result.metrics.comments
-                }
-              />
-
-            </div>
-
-          </div>
-
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-
-            <div className="flex items-center gap-2">
-
-              <Clock3
-                size={15}
-                className="text-zinc-500"
-              />
-
-              <h2 className="text-sm font-semibold">
-                Complexity Analysis
-              </h2>
-
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-
-              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
-
-                <div className="text-[10px] uppercase tracking-wider text-zinc-700">
-                  Time
-                </div>
-
-                <div className="mt-2 font-mono text-lg text-zinc-300">
-                  {result.complexity.time}
-                </div>
-
-              </div>
-
-              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
-
-                <div className="text-[10px] uppercase tracking-wider text-zinc-700">
-                  Space
-                </div>
-
-                <div className="mt-2 font-mono text-lg text-zinc-300">
-                  {result.complexity.space}
-                </div>
-
-              </div>
-
-            </div>
-
-            <p className="mt-4 text-xs leading-5 text-zinc-600">
-              {result.complexity.explanation}
-            </p>
-
-          </div>
-
-        </div>
-
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-
-          <div className="border-b border-white/[0.07] p-5">
-
-            <div className="flex items-center gap-2">
-
-              <AlertTriangle
-                size={15}
-                className="text-zinc-500"
-              />
-
-              <h2 className="text-sm font-semibold">
-                Detected Issues
-              </h2>
-
-            </div>
-
-            <p className="mt-1 text-xs text-zinc-700">
-              {result.issues.length} issues found
-            </p>
-
-          </div>
-
-          <div className="space-y-3 p-5">
-
-            {result.issues.length ===
-            0 ? (
-              <div className="rounded-xl border border-white/[0.06] bg-black/20 p-6 text-center">
-
-                <CheckCircle2
-                  size={20}
-                  className="mx-auto text-emerald-400"
-                />
-
-                <div className="mt-3 text-sm text-zinc-400">
-                  No issues detected
-                </div>
-
-              </div>
-            ) : (
-              result.issues.map(
-                (issue, index) => (
-                  <Issue
-                    key={index}
-                    issue={issue}
-                  />
-                )
-              )
-            )}
-
-          </div>
-
-        </div>
-
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-
-          <div className="border-b border-white/[0.07] p-5">
-
-            <div className="flex items-center gap-2">
-
-              <Sparkles
-                size={15}
-                className="text-zinc-500"
-              />
-
-              <h2 className="text-sm font-semibold">
-                SmartLab AI Review
-              </h2>
-
-            </div>
-
-            <p className="mt-1 text-xs text-zinc-700">
-              Automated recommendations
-            </p>
-
-          </div>
-
-          <div className="grid gap-3 p-5 md:grid-cols-2">
-
-            {result.aiReview.map(
-              (review, index) => (
-                <div
-                  key={index}
-                  className="rounded-xl border border-white/[0.06] bg-black/20 p-4"
-                >
-
-                  <div className="flex gap-3">
-
-                    <div className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-600" />
-
-                    <p className="text-sm leading-6 text-zinc-500">
-                      {review}
+                  <div className="min-w-0">
+                    <p className="truncate text-xs text-zinc-300">
+                      {test.name}
                     </p>
 
+                    <p className="mt-1 text-[11px] text-zinc-600">
+                      Expected:{" "}
+                      {test.expected}
+                    </p>
                   </div>
 
+                  {test.status ===
+                  "passed" ? (
+                    <CheckCircle2
+                      size={16}
+                      className="text-emerald-400"
+                    />
+                  ) : (
+                    <AlertCircle
+                      size={16}
+                      className="text-red-400"
+                    />
+                  )}
                 </div>
               )
             )}
-
           </div>
+        ) : (
+          <p className="text-xs text-zinc-600">
+            No executable tests generated.
+          </p>
+        )}
+      </div>
 
+      <div className="mb-5 rounded-xl border border-white/10 bg-black/10 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-medium">
+            Issues
+          </h3>
+
+          <span className="text-xs text-zinc-600">
+            {issues.length}
+          </span>
         </div>
 
-      </section>
+        {issues.length === 0 ? (
+          <div className="flex items-center gap-2 text-xs text-emerald-400">
+            <CheckCircle2
+              size={15}
+            />
+            No obvious issues detected.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {issues.map(
+              (
+                issue: Issue,
+                index: number
+              ) => (
+                <div
+                  key={index}
+                  className="rounded-lg border border-white/5 bg-white/[0.02] p-3"
+                >
+                  <div className="flex items-start gap-2">
+                    {issue.type ===
+                    "error" ? (
+                      <AlertCircle
+                        size={15}
+                        className="mt-0.5 shrink-0 text-red-400"
+                      />
+                    ) : issue.type ===
+                      "warning" ? (
+                      <TriangleAlert
+                        size={15}
+                        className="mt-0.5 shrink-0 text-amber-400"
+                      />
+                    ) : (
+                      <AlertCircle
+                        size={15}
+                        className="mt-0.5 shrink-0 text-blue-400"
+                      />
+                    )}
 
+                    <div>
+                      <p className="text-xs font-medium text-zinc-300">
+                        {issue.title}
+                      </p>
+
+                      <p className="mt-1 text-[11px] leading-5 text-zinc-600">
+                        {issue.description}
+                      </p>
+
+                      {issue.line && (
+                        <p className="mt-2 text-[10px] text-zinc-700">
+                          Line{" "}
+                          {issue.line}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="mb-5 rounded-xl border border-white/10 bg-black/10 p-4">
+        <h3 className="mb-3 text-sm font-medium">
+          Complexity
+        </h3>
+
+        <p className="text-xs leading-5 text-zinc-500">
+          {review.complexity
+            ?.explanation ||
+            "No complexity explanation available."}
+        </p>
+      </div>
+
+      <button
+        onClick={onFix}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-zinc-200"
+      >
+        <Sparkles
+          size={16}
+        />
+        Analyze & Fix with SmartLab
+      </button>
     </div>
   );
 }
 
-function TestValue({
-  label,
-  value,
+function DiffPanel({
+  result,
+  onApply,
+  onReject,
 }: {
-  label: string;
-  value: string;
+  result: AgentResponse | null;
+  onApply: () => void;
+  onReject: () => void;
 }) {
+  if (!result?.patch) {
+    return (
+      <div className="flex min-h-[620px] items-center justify-center px-8 text-center">
+        <div>
+          <GitCompare
+            size={28}
+            className="mx-auto mb-4 text-zinc-700"
+          />
+
+          <p className="text-sm text-zinc-500">
+            No proposed fix yet.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const verified =
+    result.verification
+      ?.verified === true;
+
+  const changes =
+    result.patch.changes || [];
+
   return (
-    <div>
+    <div className="max-h-[700px] overflow-y-auto p-5">
+      <div
+        className={`mb-5 rounded-xl border p-4 ${
+          verified
+            ? "border-emerald-500/20 bg-emerald-500/5"
+            : "border-red-500/20 bg-red-500/5"
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          {verified ? (
+            <CheckCircle2
+              size={19}
+              className="mt-0.5 text-emerald-400"
+            />
+          ) : (
+            <AlertCircle
+              size={19}
+              className="mt-0.5 text-red-400"
+            />
+          )}
 
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-700">
-        {label}
+          <div>
+            <p className="text-sm font-medium">
+              {verified
+                ? "Fix verified"
+                : "Fix verification failed"}
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              {result.verification
+                ?.reason ||
+                result.patch
+                  .explanation}
+            </p>
+
+            {result.verification && (
+              <p className="mt-2 text-xs text-zinc-400">
+                Tests:{" "}
+                {
+                  result.verification
+                    .passed
+                }
+                /
+                {
+                  result.verification
+                    .total
+                }
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="rounded-lg border border-white/[0.05] bg-[#050608] px-3 py-2 font-mono text-[11px] text-zinc-500">
-        {value}
+      <div className="mb-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-medium">
+            Proposed Changes
+          </h3>
+
+          <span className="text-xs text-zinc-600">
+            {changes.length} change
+            {changes.length !== 1
+              ? "s"
+              : ""}
+          </span>
+        </div>
+
+        <div className="space-y-3">
+          {changes.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-black/10 p-4 text-xs text-zinc-600">
+              No individual changes were generated.
+            </div>
+          ) : (
+            changes.map(
+              (
+                change,
+                index
+              ) => (
+                <div
+                  key={index}
+                  className="overflow-hidden rounded-xl border border-white/10 bg-black/20"
+                >
+                  <div className="flex items-center justify-between border-b border-white/5 px-4 py-2">
+                    <span className="text-[11px] text-zinc-500">
+                      Line{" "}
+                      {change.line ||
+                        "—"}
+                    </span>
+                  </div>
+
+                  <div className="font-mono text-xs">
+                    <div className="flex bg-red-500/5 px-4 py-2 text-red-300">
+                      <span className="mr-3 select-none text-red-500">
+                        −
+                      </span>
+
+                      <span className="whitespace-pre-wrap">
+                        {change.oldCode}
+                      </span>
+                    </div>
+
+                    <div className="flex bg-emerald-500/5 px-4 py-2 text-emerald-300">
+                      <span className="mr-3 select-none text-emerald-500">
+                        +
+                      </span>
+
+                      <span className="whitespace-pre-wrap">
+                        {change.newCode}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/5 px-4 py-3 text-[11px] leading-5 text-zinc-600">
+                    {change.reason}
+                  </div>
+                </div>
+              )
+            )
+          )}
+        </div>
       </div>
 
+      <div className="mb-5">
+        <h3 className="mb-3 text-sm font-medium">
+          Fixed Code
+        </h3>
+
+        <pre className="max-h-72 overflow-auto rounded-xl border border-white/10 bg-black/30 p-4 font-mono text-xs leading-6 text-zinc-300">
+          {result.patch.fixedCode}
+        </pre>
+      </div>
+
+      {result.verification
+        ?.cases?.length ? (
+        <div className="mb-5">
+          <h3 className="mb-3 text-sm font-medium">
+            Verification
+          </h3>
+
+          <div className="space-y-2">
+            {result.verification.cases.map(
+              (
+                test,
+                index
+              ) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3"
+                >
+                  <div>
+                    <p className="text-xs text-zinc-300">
+                      {test.name}
+                    </p>
+
+                    <p className="mt-1 font-mono text-[10px] text-zinc-600">
+                      expected:{" "}
+                      {test.expected}
+                      {" · "}
+                      actual:{" "}
+                      {test.actual}
+                    </p>
+                  </div>
+
+                  {test.status ===
+                  "passed" ? (
+                    <CheckCircle2
+                      size={16}
+                      className="text-emerald-400"
+                    />
+                  ) : (
+                    <AlertCircle
+                      size={16}
+                      className="text-red-400"
+                    />
+                  )}
+                </div>
+              )
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex gap-3">
+        <button
+          onClick={onReject}
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.07]"
+        >
+          <X size={16} />
+          Reject
+        </button>
+
+        <button
+          onClick={onApply}
+          disabled={!verified}
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          <Check size={16} />
+          Apply Fix
+        </button>
+      </div>
+
+      {!verified && (
+        <p className="mt-3 text-center text-[11px] text-zinc-600">
+          Apply Fix is disabled until all verification tests pass.
+        </p>
+      )}
     </div>
   );
 }
 
 function Metric({
+  icon,
   label,
   value,
 }: {
+  icon: React.ReactNode;
   label: string;
-  value: number;
+  value: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
+    <div className="rounded-xl border border-white/10 bg-black/10 p-4">
+      <div className="mb-2 flex items-center gap-2 text-zinc-500">
+        {icon}
 
-      <div className="text-2xl font-semibold">
+        <span className="text-[11px]">
+          {label}
+        </span>
+      </div>
+
+      <p className="text-lg font-semibold text-zinc-200">
         {value}
-      </div>
-
-      <div className="mt-1 text-xs text-zinc-600">
-        {label}
-      </div>
-
+      </p>
     </div>
   );
 }
 
-function Issue({
-  issue,
+function StatusBadge({
+  passed,
 }: {
-  issue: ReviewResult["issues"][number];
+  passed: boolean;
 }) {
-  const isError =
-    issue.type === "error";
-
-  const isWarning =
-    issue.type === "warning";
-
-  return (
-    <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
-
-      <div className="flex gap-3">
-
-        <div
-          className={
-            isError
-              ? "mt-0.5 shrink-0 text-red-400"
-              : isWarning
-                ? "mt-0.5 shrink-0 text-yellow-400"
-                : "mt-0.5 shrink-0 text-zinc-500"
-          }
-        >
-
-          {isError ? (
-            <XCircle size={16} />
-          ) : isWarning ? (
-            <AlertTriangle
-              size={16}
-            />
-          ) : (
-            <CheckCircle2
-              size={16}
-            />
-          )}
-
-        </div>
-
-        <div className="min-w-0">
-
-          <div className="text-sm font-medium text-zinc-300">
-            {issue.title}
-          </div>
-
-          <p className="mt-1 text-xs leading-5 text-zinc-600">
-            {issue.description}
-          </p>
-
-          {issue.line && (
-            <div className="mt-3 text-[10px] text-zinc-700">
-              Line {issue.line}
-            </div>
-          )}
-
-        </div>
-
-      </div>
-
-    </div>
+  return passed ? (
+    <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-400">
+      <Check
+        size={11}
+      />
+      Passed
+    </span>
+  ) : (
+    <span className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2 py-1 text-[10px] text-red-400">
+      <AlertCircle
+        size={11}
+      />
+      Failed
+    </span>
   );
 }

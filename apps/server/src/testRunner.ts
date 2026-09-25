@@ -1,4 +1,4 @@
-import { runCode } from "./codeRunner";
+import { runCode } from "./codeRunner.js";
 
 export type RealTestCase = {
   name: string;
@@ -6,172 +6,229 @@ export type RealTestCase = {
   expected: string;
 };
 
-export type RealTestResult = {
+export type TestCaseResult = {
   name: string;
   input: string;
   expected: string;
   actual: string;
   status: "passed" | "failed";
   runtimeMs: number;
-  error?: string;
 };
 
 export type TestRunResult = {
   passed: number;
   total: number;
-  cases: RealTestResult[];
+  cases: TestCaseResult[];
 };
 
 function normalizeOutput(
   value: string
 ): string {
-  const trimmed = value.trim();
+  return value
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
 
-  if (!trimmed) {
+function safeJsonParse(
+  value: string
+): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractSmartLabOutput(
+  stdout: string
+): string {
+  const normalized =
+    normalizeOutput(stdout);
+
+  if (!normalized) {
     return "";
   }
 
-  try {
-    return JSON.stringify(
-      JSON.parse(trimmed)
+  const lines =
+    normalized.split("\n");
+
+  const smartLabLine =
+    lines.find((line) =>
+      line.startsWith(
+        "SMARTLAB_RESULT:"
+      )
     );
-  } catch {
-    return trimmed;
+
+  if (smartLabLine) {
+    return normalizeOutput(
+      smartLabLine.replace(
+        "SMARTLAB_RESULT:",
+        ""
+      )
+    );
   }
+
+  return normalized;
 }
 
-function createPythonHarness(
+function buildPythonHarness(
   code: string,
   functionName: string,
-  testCase: RealTestCase
+  input: string
 ): string {
-  return `
-${code}
+  const encodedCode =
+    Buffer.from(code).toString(
+      "base64"
+    );
 
+  const encodedInput =
+    Buffer.from(input).toString(
+      "base64"
+    );
+
+  return `
+import base64
 import json
 
-try:
-    args = json.loads(${JSON.stringify(
-      testCase.input
-    )})
+SOURCE = base64.b64decode("${encodedCode}").decode("utf-8")
+INPUT = base64.b64decode("${encodedInput}").decode("utf-8")
 
-    result = ${functionName}(*args)
+namespace = {
+    "__name__": "__smartlab__"
+}
 
-    print("__SMARTLAB_RESULT__")
-    print(json.dumps(result))
+exec(SOURCE, namespace)
 
-except Exception as e:
-    print("__SMARTLAB_ERROR__")
-    print(
-        type(e).__name__
-        + ": "
-        + str(e)
-    )
+value = json.loads(INPUT)
+
+if isinstance(value, list):
+    result = namespace["${functionName}"](*value)
+else:
+    result = namespace["${functionName}"](value)
+
+print("SMARTLAB_RESULT:" + json.dumps(result, default=str))
 `;
 }
 
-async function runSinglePythonTest(
+function buildJavaScriptHarness(
   code: string,
   functionName: string,
-  testCase: RealTestCase
-): Promise<RealTestResult> {
-  const harness =
-    createPythonHarness(
-      code,
-      functionName,
-      testCase
+  input: string
+): string {
+  const encodedCode =
+    Buffer.from(code).toString(
+      "base64"
     );
 
-  const result =
-    await runCode(
-      harness,
-      "python"
+  const encodedInput =
+    Buffer.from(input).toString(
+      "base64"
     );
 
-  const output =
-    result.stdout.trim();
+  return `
+const source = Buffer.from(
+  "${encodedCode}",
+  "base64"
+).toString("utf8");
 
-  let actual = "";
-  let error:
-    | string
-    | undefined;
+const input = JSON.parse(
+  Buffer.from(
+    "${encodedInput}",
+    "base64"
+  ).toString("utf8")
+);
 
-  if (
-    output.includes(
-      "__SMARTLAB_ERROR__"
-    )
-  ) {
-    const parts =
-      output.split(
-        "__SMARTLAB_ERROR__"
-      );
+const moduleObject = {
+  exports: {}
+};
 
-    error =
-      parts[1]?.trim() ||
-      "Unknown execution error";
-  } else if (
-    output.includes(
-      "__SMARTLAB_RESULT__"
-    )
-  ) {
-    const parts =
-      output.split(
-        "__SMARTLAB_RESULT__"
-      );
+const module = moduleObject;
 
-    actual =
-      parts[1]?.trim() || "";
-  } else {
-    actual = output;
+const exports = module.exports;
+
+eval(source);
+
+let fn =
+  typeof ${functionName} === "function"
+    ? ${functionName}
+    : undefined;
+
+if (!fn && typeof module.exports === "function") {
+  fn = module.exports;
+}
+
+if (
+  !fn &&
+  module.exports &&
+  typeof module.exports["${functionName}"] === "function"
+) {
+  fn = module.exports["${functionName}"];
+}
+
+if (!fn) {
+  throw new Error(
+    "Function ${functionName} was not found."
+  );
+}
+
+const result =
+  Array.isArray(input)
+    ? fn(...input)
+    : fn(input);
+
+console.log(
+  "SMARTLAB_RESULT:" +
+  JSON.stringify(result)
+);
+`;
+}
+
+function parseFunctionArguments(
+  input: string
+): unknown {
+  const parsed =
+    safeJsonParse(input);
+
+  if (parsed !== undefined) {
+    return parsed;
   }
 
-  if (result.timedOut) {
-    error =
-      "Execution timed out.";
-  }
+  return input;
+}
 
-  if (
-    result.stderr &&
-    !error
-  ) {
-    error =
-      result.stderr.trim();
-  }
-
-  const normalizedActual =
-    normalizeOutput(actual);
-
-  const normalizedExpected =
-    normalizeOutput(
-      testCase.expected
+function findPythonFunction(
+  code: string
+): string | undefined {
+  const match =
+    code.match(
+      /^\s*def\s+([a-zA-Z_]\w*)\s*\(/m
     );
 
-  const passed =
-    result.exitCode === 0 &&
-    !result.timedOut &&
-    !error &&
-    normalizedActual ===
-      normalizedExpected;
+  return match?.[1];
+}
 
-  return {
-    name: testCase.name,
-    input: testCase.input,
-    expected:
-      testCase.expected,
-    actual:
-      actual ||
-      error ||
-      "",
-    status:
-      passed
-        ? "passed"
-        : "failed",
-    runtimeMs:
-      result.runtimeMs,
-    ...(error
-      ? { error }
-      : {}),
-  };
+function findJavaScriptFunction(
+  code: string
+): string | undefined {
+  const declaration =
+    code.match(
+      /\bfunction\s+([a-zA-Z_$][\w$]*)\s*\(/
+    );
+
+  if (declaration?.[1]) {
+    return declaration[1];
+  }
+
+  const arrow =
+    code.match(
+      /\b(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:async\s*)?\(/
+    );
+
+  if (arrow?.[1]) {
+    return arrow[1];
+  }
+
+  return undefined;
 }
 
 export async function runPythonTests(
@@ -179,31 +236,174 @@ export async function runPythonTests(
   functionName: string,
   testCases: RealTestCase[]
 ): Promise<TestRunResult> {
-  const cases: RealTestResult[] =
-    [];
+  const cases: TestCaseResult[] = [];
 
   for (const testCase of testCases) {
-    const result =
-      await runSinglePythonTest(
+    const harness =
+      buildPythonHarness(
         code,
         functionName,
-        testCase
+        testCase.input
       );
 
-    cases.push(result);
+    const result =
+      await runCode(
+        harness,
+        "python",
+        3000
+      );
+
+    const actual =
+      extractSmartLabOutput(
+        result.stdout
+      );
+
+    const expected =
+      normalizeOutput(
+        testCase.expected
+      );
+
+    const passed =
+      !result.timedOut &&
+      result.exitCode === 0 &&
+      actual === expected;
+
+    cases.push({
+      name: testCase.name,
+      input: testCase.input,
+      expected: testCase.expected,
+      actual:
+        actual ||
+        normalizeOutput(
+          result.stderr
+        ),
+      status:
+        passed
+          ? "passed"
+          : "failed",
+      runtimeMs:
+        result.runtimeMs,
+    });
   }
 
-  const passed =
-    cases.filter(
-      (testCase) =>
-        testCase.status ===
-        "passed"
-    ).length;
-
   return {
-    passed,
+    passed: cases.filter(
+      (item) =>
+        item.status === "passed"
+    ).length,
     total: cases.length,
     cases,
+  };
+}
+
+export async function runJavaScriptTests(
+  code: string,
+  functionName: string,
+  testCases: RealTestCase[]
+): Promise<TestRunResult> {
+  const cases: TestCaseResult[] = [];
+
+  for (const testCase of testCases) {
+    const harness =
+      buildJavaScriptHarness(
+        code,
+        functionName,
+        testCase.input
+      );
+
+    const result =
+      await runCode(
+        harness,
+        "javascript",
+        3000
+      );
+
+    const actual =
+      extractSmartLabOutput(
+        result.stdout
+      );
+
+    const expected =
+      normalizeOutput(
+        testCase.expected
+      );
+
+    const passed =
+      !result.timedOut &&
+      result.exitCode === 0 &&
+      actual === expected;
+
+    cases.push({
+      name: testCase.name,
+      input: testCase.input,
+      expected: testCase.expected,
+      actual:
+        actual ||
+        normalizeOutput(
+          result.stderr
+        ),
+      status:
+        passed
+          ? "passed"
+          : "failed",
+      runtimeMs:
+        result.runtimeMs,
+    });
+  }
+
+  return {
+    passed: cases.filter(
+      (item) =>
+        item.status === "passed"
+    ).length,
+    total: cases.length,
+    cases,
+  };
+}
+
+async function runSingleProgramTest(
+  code: string,
+  language: string,
+  testCase: RealTestCase
+): Promise<TestCaseResult> {
+  const result =
+    await runCode(
+      code,
+      language,
+      3000,
+      testCase.input
+    );
+
+  const actual =
+    normalizeOutput(
+      result.stdout
+    );
+
+  const expected =
+    normalizeOutput(
+      testCase.expected
+    );
+
+  const passed =
+    !result.timedOut &&
+    result.exitCode === 0 &&
+    actual === expected;
+
+  return {
+    name: testCase.name,
+    input: testCase.input,
+    expected: testCase.expected,
+    actual:
+      actual ||
+      normalizeOutput(
+        result.stderr
+      ),
+    status:
+      passed
+        ? "passed"
+        : "failed",
+    runtimeMs:
+      result.runtimeMs,
   };
 }
 
@@ -212,40 +412,92 @@ export async function runProgramTests(
   language: string,
   testCases: RealTestCase[]
 ): Promise<TestRunResult> {
-  const normalizedLanguage =
+  const normalized =
     language
       .trim()
       .toLowerCase();
 
   if (
-    normalizedLanguage ===
-      "python" ||
-    normalizedLanguage ===
-      "py"
+    normalized === "python" ||
+    normalized === "py"
   ) {
-    const functionMatch =
-      code.match(
-        /^\s*def\s+([a-zA-Z_]\w*)\s*\(/m
+    const functionName =
+      findPythonFunction(code);
+
+    if (functionName) {
+      return runPythonTests(
+        code,
+        functionName,
+        testCases
+      );
+    }
+  }
+
+  if (
+    normalized === "javascript" ||
+    normalized === "js"
+  ) {
+    const functionName =
+      findJavaScriptFunction(
+        code
       );
 
-    if (!functionMatch) {
-      return {
-        passed: 0,
-        total: 0,
-        cases: [],
-      };
+    if (functionName) {
+      return runJavaScriptTests(
+        code,
+        functionName,
+        testCases
+      );
     }
+  }
 
-    return runPythonTests(
-      code,
-      functionMatch[1],
-      testCases
-    );
+  const cases: TestCaseResult[] = [];
+
+  for (const testCase of testCases) {
+    const result =
+      await runSingleProgramTest(
+        code,
+        normalized,
+        testCase
+      );
+
+    cases.push(result);
   }
 
   return {
-    passed: 0,
-    total: 0,
-    cases: [],
+    passed: cases.filter(
+      (item) =>
+        item.status === "passed"
+    ).length,
+    total: cases.length,
+    cases,
+  };
+}
+
+export async function runGenericTests(
+  code: string,
+  language: string,
+  testCases: RealTestCase[]
+): Promise<TestRunResult> {
+  const cases: TestCaseResult[] = [];
+
+  for (const testCase of testCases) {
+    const result =
+      await runSingleProgramTest(
+        code,
+        language,
+        testCase
+      );
+
+    cases.push(result);
+  }
+
+  return {
+    passed: cases.filter(
+      (item) =>
+        item.status === "passed"
+    ).length,
+    total: cases.length,
+    cases,
   };
 }

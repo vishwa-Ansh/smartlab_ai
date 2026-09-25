@@ -10,32 +10,35 @@ export type TestCase = {
   status: "passed" | "failed";
 };
 
+export type Issue = {
+  type: "error" | "warning" | "info";
+  title: string;
+  description: string;
+  line?: number;
+};
+
 export type Review = {
   id: string;
   fileName: string;
   language: string;
   createdAt: string;
   score: number;
-
   tests: {
     passed: number;
     total: number;
     cases?: TestCase[];
   };
-
   complexity: string;
 };
 
 export type ReviewDetail = {
   success: boolean;
-
   submission: {
     id: string;
     code: string;
     language: string;
     fileName: string;
     createdAt: string;
-
     score: number;
 
     syntax: {
@@ -55,12 +58,7 @@ export type ReviewDetail = {
       explanation: string;
     };
 
-    issues: Array<{
-      type: "error" | "warning" | "info";
-      title: string;
-      description: string;
-      line?: number;
-    }>;
+    issues: Issue[];
 
     metrics: {
       lines: number;
@@ -98,12 +96,7 @@ export type CreateReviewResponse = {
       explanation: string;
     };
 
-    issues: Array<{
-      type: "error" | "warning" | "info";
-      title: string;
-      description: string;
-      line?: number;
-    }>;
+    issues: Issue[];
 
     metrics: {
       lines: number;
@@ -114,6 +107,61 @@ export type CreateReviewResponse = {
 
     aiReview: string[];
   };
+};
+
+export type AgentChange = {
+  line: number;
+  oldCode: string;
+  newCode: string;
+  reason: string;
+};
+
+export type AgentPatch = {
+  success: boolean;
+  originalCode: string;
+  fixedCode: string;
+  explanation: string;
+  changes: AgentChange[];
+};
+
+export type AgentAnalysis = {
+  language: string;
+  issueCount: number;
+  issues: Issue[];
+};
+
+export type AgentVerificationCase = {
+  name: string;
+  input: string;
+  expected: string;
+  actual: string;
+  status: "passed" | "failed";
+};
+
+export type AgentVerification = {
+  verified: boolean;
+  reason: string;
+  passed: number;
+  total: number;
+  cases: AgentVerificationCase[];
+};
+
+export type AgentResponse = {
+  success: boolean;
+  message: string;
+
+  analysis: AgentAnalysis;
+
+  patch?: AgentPatch;
+
+  verification?: AgentVerification;
+
+  actions?: Array<
+    | "analyze"
+    | "explain"
+    | "generate_patch"
+    | "verify"
+  >;
 };
 
 export async function getReviews(): Promise<
@@ -132,7 +180,8 @@ export async function getReviews(): Promise<
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   return data.reviews || [];
 }
@@ -276,6 +325,84 @@ export async function testPython(
   }
 
   return response.json();
+}
+
+export async function runAgent(
+  code: string,
+  language: string,
+  question = "",
+  issues: Issue[] = []
+): Promise<AgentResponse> {
+  const response = await fetch(
+    `${API_URL}/api/agent`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+
+      body: JSON.stringify({
+        code,
+        language,
+        question,
+        issues,
+      }),
+    }
+  );
+
+  const data =
+    await response
+      .json()
+      .catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+        "SmartLab agent failed"
+    );
+  }
+
+  return data;
+}
+
+export async function fixCode(
+  code: string,
+  language: string,
+  issues: Issue[] = []
+): Promise<AgentResponse> {
+  const response = await fetch(
+    `${API_URL}/api/agent/fix`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+
+      body: JSON.stringify({
+        code,
+        language,
+        issues,
+      }),
+    }
+  );
+
+  const data =
+    await response
+      .json()
+      .catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+        "SmartLab could not fix the code"
+    );
+  }
+
+  return data;
 }
 
 export async function checkHealth() {

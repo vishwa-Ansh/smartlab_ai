@@ -24,19 +24,43 @@ const LANGUAGE_CONFIG: Record<
   python: {
     image: "python:3.12-alpine",
     fileName: "main.py",
-    command: "python /tmp/main.py",
+    command:
+      "python /tmp/main.py",
+  },
+
+  py: {
+    image: "python:3.12-alpine",
+    fileName: "main.py",
+    command:
+      "python /tmp/main.py",
   },
 
   javascript: {
     image: "node:22-alpine",
     fileName: "main.js",
-    command: "node /tmp/main.js",
+    command:
+      "node /tmp/main.js",
   },
 
   js: {
     image: "node:22-alpine",
     fileName: "main.js",
-    command: "node /tmp/main.js",
+    command:
+      "node /tmp/main.js",
+  },
+
+  typescript: {
+    image: "node:22-alpine",
+    fileName: "main.ts",
+    command:
+      "node /tmp/main.ts",
+  },
+
+  ts: {
+    image: "node:22-alpine",
+    fileName: "main.ts",
+    command:
+      "node /tmp/main.ts",
   },
 
   cpp: {
@@ -53,6 +77,13 @@ const LANGUAGE_CONFIG: Record<
       "g++ -std=c++17 -O2 /tmp/main.cpp -o /tmp/main && /tmp/main",
   },
 
+  c: {
+    image: "gcc:14",
+    fileName: "main.c",
+    command:
+      "gcc -std=c17 -O2 /tmp/main.c -o /tmp/main && /tmp/main",
+  },
+
   java: {
     image: "eclipse-temurin:21-jdk",
     fileName: "Main.java",
@@ -63,16 +94,35 @@ const LANGUAGE_CONFIG: Record<
 
 function normalizeLanguage(
   language: string
-) {
+): string {
   return language
     .trim()
     .toLowerCase();
 }
 
+function createContainerName(): string {
+  return (
+    `smartlab-${Date.now()}-` +
+    Math.random()
+      .toString(36)
+      .slice(2, 10)
+  );
+}
+
+function encodeBase64(
+  value: string
+): string {
+  return Buffer.from(
+    value,
+    "utf8"
+  ).toString("base64");
+}
+
 export async function runCode(
   code: string,
   language: string,
-  timeoutMs = 3000
+  timeoutMs = 3000,
+  stdin = ""
 ): Promise<ExecutionResult> {
   const normalizedLanguage =
     normalizeLanguage(language);
@@ -88,21 +138,36 @@ export async function runCode(
     );
   }
 
+  if (!code.trim()) {
+    return {
+      stdout: "",
+      stderr:
+        "Source code is empty.",
+      exitCode: 1,
+      runtimeMs: 0,
+      timedOut: false,
+    };
+  }
+
   const containerName =
-    `smartlab-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
+    createContainerName();
 
   const encodedCode =
-    Buffer.from(code).toString(
-      "base64"
-    );
+    encodeBase64(code);
 
-  const writeCommand =
+  const encodedStdin =
+    encodeBase64(stdin);
+
+  const writeCodeCommand =
     `echo '${encodedCode}' | base64 -d > /tmp/${config.fileName}`;
 
+  const writeInputCommand =
+    `echo '${encodedStdin}' | base64 -d > /tmp/input.txt`;
+
   const shellCommand =
-    `${writeCommand} && ${config.command}`;
+    `${writeCodeCommand} && ` +
+    `${writeInputCommand} && ` +
+    `${config.command} < /tmp/input.txt`;
 
   const dockerArgs = [
     "run",
@@ -138,7 +203,9 @@ export async function runCode(
     config.image,
 
     "sh",
+
     "-c",
+
     shellCommand,
   ];
 
@@ -167,7 +234,8 @@ export async function runCode(
       exitCode: 0,
 
       runtimeMs:
-        Date.now() - startTime,
+        Date.now() -
+        startTime,
 
       timedOut: false,
     };
@@ -175,25 +243,38 @@ export async function runCode(
     const timedOut =
       error?.killed === true ||
       error?.signal === "SIGTERM" ||
-      error?.code === "ETIMEDOUT";
+      error?.code ===
+        "ETIMEDOUT";
+
+    let exitCode = 1;
+
+    if (
+      typeof error?.code ===
+      "number"
+    ) {
+      exitCode =
+        error.code;
+    }
 
     return {
       stdout:
-        error?.stdout || "",
+        typeof error?.stdout ===
+        "string"
+          ? error.stdout
+          : "",
 
       stderr:
-        error?.stderr ||
-        error?.message ||
-        "",
+        typeof error?.stderr ===
+        "string"
+          ? error.stderr
+          : error?.message ||
+            "Execution failed.",
 
-      exitCode:
-        typeof error?.code ===
-        "number"
-          ? error.code
-          : 1,
+      exitCode,
 
       runtimeMs:
-        Date.now() - startTime,
+        Date.now() -
+        startTime,
 
       timedOut,
     };

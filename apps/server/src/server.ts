@@ -1,25 +1,21 @@
 import express from "express";
-import type { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
 
-import {
-  runCode,
-} from "./codeRunner";
-
+import { runCode } from "./codeRunner.js";
 import {
   runPythonTests,
   runProgramTests,
-  type RealTestCase,
-} from "./testRunner";
+} from "./testRunner.js";
+import { runAgent } from "./agent/agent.js";
+import { verifyPatch } from "./agent/verifier.js";
 
 dotenv.config();
 
 const app = express();
 
-const PORT =
-  Number(process.env.PORT) || 4000;
+const PORT = Number(process.env.PORT) || 4000;
 
 app.use(
   cors({
@@ -33,10 +29,7 @@ app.use(
   })
 );
 
-type IssueType =
-  | "error"
-  | "warning"
-  | "info";
+type IssueType = "error" | "warning" | "info";
 
 type Issue = {
   type: IssueType;
@@ -49,8 +42,6 @@ type TestCase = {
   name: string;
   input: string;
   expected: string;
-  actual: string;
-  status: "passed" | "failed";
 };
 
 type Submission = {
@@ -63,286 +54,246 @@ type Submission = {
 
 type ReviewResult = {
   score: number;
-
   syntax: {
     status: "passed" | "failed";
     message: string;
   };
-
   tests: {
     passed: number;
     total: number;
-    cases: TestCase[];
+    cases: Array<{
+      name: string;
+      input: string;
+      expected: string;
+      actual: string;
+      status: "passed" | "failed";
+      runtimeMs?: number;
+    }>;
   };
-
   complexity: {
     time: string;
     space: string;
     explanation: string;
   };
-
   issues: Issue[];
-
   metrics: {
     lines: number;
     codeLines: number;
     functions: number;
     comments: number;
   };
-
   aiReview: string[];
 };
 
-const submissions =
-  new Map<string, Submission>();
+const submissions = new Map<string, Submission>();
+const reviews = new Map<string, ReviewResult>();
 
-const reviews =
-  new Map<string, ReviewResult>();
+app.get("/api/health", (_req, res) => {
+  return res.json({
+    success: true,
+    service: "SmartLab API",
+    status: "running",
+    timestamp: new Date().toISOString(),
+  });
+});
 
-app.get(
-  "/api/health",
-  (
-    _req: Request,
-    res: Response
-  ) => {
-    res.json({
+app.post("/api/execute", async (req, res) => {
+  try {
+    const {
+      code,
+      language = "python",
+      stdin = "",
+    } = req.body;
+
+    if (typeof code !== "string" || !code.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Code is required.",
+      });
+    }
+
+    if (typeof language !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "Language must be a string.",
+      });
+    }
+
+    const result = await runCode(
+      code,
+      language,
+      3000,
+      typeof stdin === "string" ? stdin : ""
+    );
+
+    return res.json({
       success: true,
-      service: "SmartLab API",
-      status: "running",
-      timestamp:
-        new Date().toISOString(),
+      result,
+    });
+  } catch (error) {
+    console.error("[SmartLab] Execution error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Execution failed.",
     });
   }
-);
+});
 
-app.post(
-  "/api/execute",
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    try {
-      const {
-        code,
-        language = "python",
-      } = req.body;
+app.post("/api/test-python", async (req, res) => {
+  try {
+    const {
+      code,
+      functionName,
+      testCases,
+    } = req.body;
 
-      if (
-        !code ||
-        typeof code !== "string"
-      ) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Code is required.",
-        });
-      }
-
-      const result =
-        await runCode(
-          code,
-          language
-        );
-
-      return res.json({
-        success: true,
-        result,
-      });
-    } catch (error) {
-      console.error(
-        "[SmartLab] Execution error:",
-        error
-      );
-
-      return res.status(500).json({
+    if (
+      typeof code !== "string" ||
+      typeof functionName !== "string" ||
+      !Array.isArray(testCases)
+    ) {
+      return res.status(400).json({
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Execution failed.",
+          "code, functionName and testCases are required.",
       });
     }
+
+    const result = await runPythonTests(
+      code,
+      functionName,
+      testCases
+    );
+
+    return res.json({
+      success: true,
+      result,
+    });
+  } catch (error) {
+    console.error("[SmartLab] Python test error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Test execution failed.",
+    });
   }
-);
+});
 
-app.post(
-  "/api/test-python",
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    try {
-      const {
-        code,
-        functionName,
-        testCases,
-      } = req.body;
+app.post("/api/review", async (req, res) => {
+  try {
+    const {
+      code,
+      language,
+      fileName,
+      testCases,
+    } = req.body;
 
-      if (
-        typeof code !== "string" ||
-        typeof functionName !== "string" ||
-        !Array.isArray(testCases)
-      ) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "code, functionName and testCases are required.",
-        });
-      }
-
-      const result =
-        await runPythonTests(
-          code,
-          functionName,
-          testCases
-        );
-
-      return res.json({
-        success: true,
-        result,
-      });
-    } catch (error) {
-      console.error(
-        "[SmartLab] Test error:",
-        error
-      );
-
-      return res.status(500).json({
+    if (
+      typeof code !== "string" ||
+      !code.trim()
+    ) {
+      return res.status(400).json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Test execution failed.",
+        message: "Code is required.",
       });
     }
+
+    const normalizedLanguage =
+      typeof language === "string"
+        ? language.toLowerCase()
+        : "unknown";
+
+    const submissionId = crypto.randomUUID();
+
+    const submission: Submission = {
+      id: submissionId,
+      code,
+      language: normalizedLanguage,
+      fileName:
+        typeof fileName === "string"
+          ? fileName
+          : "unknown",
+      createdAt: new Date().toISOString(),
+    };
+
+    const analysis = await analyzeCode(
+      submission,
+      Array.isArray(testCases)
+        ? testCases
+        : undefined
+    );
+
+    submissions.set(
+      submissionId,
+      submission
+    );
+
+    reviews.set(
+      submissionId,
+      analysis
+    );
+
+    console.log(
+      `[SmartLab] Review created: ${submissionId}`
+    );
+
+    return res.status(201).json({
+      success: true,
+      submissionId,
+      message: "Code reviewed successfully.",
+      review: analysis,
+    });
+  } catch (error) {
+    console.error("[SmartLab] Review error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to analyze code.",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown review error.",
+    });
   }
-);
-
-app.post(
-  "/api/review",
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    try {
-      const {
-        code,
-        language,
-        fileName,
-        testCases,
-      } = req.body;
-
-      if (
-        !code ||
-        typeof code !== "string"
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Code is required.",
-        });
-      }
-
-      const submissionId =
-        crypto.randomUUID();
-
-      const submission: Submission = {
-        id: submissionId,
-
-        code,
-
-        language:
-          typeof language === "string"
-            ? language.toLowerCase()
-            : "unknown",
-
-        fileName:
-          typeof fileName === "string"
-            ? fileName
-            : "unknown",
-
-        createdAt:
-          new Date().toISOString(),
-      };
-
-      const analysis =
-        await analyzeCode(
-          submission,
-          Array.isArray(testCases)
-            ? testCases
-            : undefined
-        );
-
-      submissions.set(
-        submissionId,
-        submission
-      );
-
-      reviews.set(
-        submissionId,
-        analysis
-      );
-
-      console.log(
-        `[SmartLab] Review created: ${submissionId}`
-      );
-
-      return res.status(201).json({
-        success: true,
-        submissionId,
-        message:
-          "Code reviewed successfully.",
-        review: analysis,
-      });
-    } catch (error) {
-      console.error(
-        "[SmartLab] Review error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          "Failed to analyze code.",
-      });
-    }
-  }
-);
+});
 
 app.get(
   "/api/review/:submissionId",
-  (
-    req: Request,
-    res: Response
-  ) => {
-    const {
-      submissionId,
-    } = req.params;
-
-    const submission =
-      submissions.get(
-        submissionId
-      );
-
-    const review =
-      reviews.get(
-        submissionId
-      );
+  (req, res) => {
+    const submissionId =
+      req.params.submissionId;
 
     if (
-      !submission ||
-      !review
+      typeof submissionId !== "string"
     ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid submission id.",
+      });
+    }
+
+    const submission =
+      submissions.get(submissionId);
+
+    const review =
+      reviews.get(submissionId);
+
+    if (!submission || !review) {
       return res.status(404).json({
         success: false,
-        message:
-          "Review not found.",
+        message: "Review not found.",
       });
     }
 
     return res.json({
       success: true,
-
       submission: {
         ...submission,
         ...review,
@@ -351,54 +302,193 @@ app.get(
   }
 );
 
-app.get(
-  "/api/reviews",
-  (
-    _req: Request,
-    res: Response
-  ) => {
-    const result =
-      Array.from(
-        submissions.values()
-      ).map(
-        (submission) => {
-          const review =
-            reviews.get(
-              submission.id
-            );
+app.get("/api/reviews", (_req, res) => {
+  const result = Array.from(
+    submissions.values()
+  ).map((submission) => {
+    const review =
+      reviews.get(submission.id);
 
-          return {
-            id: submission.id,
+    return {
+      id: submission.id,
+      fileName: submission.fileName,
+      language: submission.language,
+      createdAt: submission.createdAt,
+      score: review?.score ?? 0,
+      tests: review?.tests ?? {
+        passed: 0,
+        total: 0,
+        cases: [],
+      },
+      complexity:
+        review?.complexity?.time ??
+        "Unknown",
+    };
+  });
 
-            fileName:
-              submission.fileName,
+  return res.json({
+    success: true,
+    reviews: result,
+  });
+});
 
-            language:
-              submission.language,
+app.post("/api/agent", async (req, res) => {
+  try {
+    const {
+      code,
+      language = "python",
+      question = "",
+      issues = [],
+    } = req.body;
 
-            createdAt:
-              submission.createdAt,
+    if (
+      typeof code !== "string" ||
+      !code.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Code is required.",
+      });
+    }
 
-            score:
-              review?.score ?? 0,
+    if (typeof language !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Language is required.",
+      });
+    }
 
-            tests:
-              review?.tests ?? {
-                passed: 0,
-                total: 0,
-              },
+    const result = await runAgent({
+      code,
+      language,
+      question:
+        typeof question === "string"
+          ? question
+          : "",
+      issues: Array.isArray(issues)
+        ? issues
+        : [],
+    });
 
-            complexity:
-              review?.complexity?.time ??
-              "Unknown",
-          };
-        }
+    return res.json(result);
+  } catch (error) {
+    console.error(
+      "[SmartLab] Agent error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Agent execution failed.",
+    });
+  }
+});
+
+app.post(
+  "/api/agent/fix",
+  async (req, res) => {
+    try {
+      const {
+        code,
+        language = "python",
+        issues = [],
+      } = req.body;
+
+      if (
+        typeof code !== "string" ||
+        !code.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Code is required.",
+        });
+      }
+
+      if (typeof language !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Language is required.",
+        });
+      }
+
+      const agentResult = await runAgent({
+        code,
+        language,
+        question: "fix the code",
+        issues: Array.isArray(issues)
+          ? issues
+          : [],
+      });
+
+      if (
+        !agentResult.patch ||
+        !agentResult.patch.success
+      ) {
+        return res.status(422).json({
+          success: false,
+          message:
+            "SmartLab could not generate a safe automatic patch.",
+          analysis: agentResult.analysis,
+          patch:
+            agentResult.patch || null,
+          verification: null,
+        });
+      }
+
+      const testExecution =
+        await executeTests(
+          code,
+          language
+        );
+
+      const realTestCases =
+        testExecution.cases.map(
+          (testCase) => ({
+            name: testCase.name,
+            input: testCase.input,
+            expected:
+              testCase.expected,
+          })
+        );
+
+      const verification =
+        await verifyPatch(
+          code,
+          agentResult.patch.fixedCode,
+          language,
+          realTestCases
+        );
+
+      return res.json({
+        success:
+          verification.verified,
+        message:
+          verification.verified
+            ? "SmartLab generated and verified the fix successfully."
+            : "SmartLab generated a patch, but verification failed.",
+        analysis:
+          agentResult.analysis,
+        patch:
+          agentResult.patch,
+        verification,
+      });
+    } catch (error) {
+      console.error(
+        "[SmartLab] Agent fix error:",
+        error
       );
 
-    return res.json({
-      success: true,
-      reviews: result,
-    });
+      return res.status(500).json({
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Automatic fix failed.",
+      });
+    }
   }
 );
 
@@ -411,8 +501,7 @@ async function analyzeCode(
     language,
   } = submission;
 
-  const lines =
-    code.split("\n");
+  const lines = code.split("\n");
 
   const codeLines =
     lines.filter(
@@ -421,24 +510,19 @@ async function analyzeCode(
     ).length;
 
   const comments =
-    lines.filter(
-      (line) => {
-        const value =
-          line.trim();
+    lines.filter((line) => {
+      const value = line.trim();
 
-        if (
-          language === "python"
-        ) {
-          return value.startsWith("#");
-        }
-
-        return (
-          value.startsWith("//") ||
-          value.startsWith("/*") ||
-          value.startsWith("*")
-        );
+      if (language === "python") {
+        return value.startsWith("#");
       }
-    ).length;
+
+      return (
+        value.startsWith("//") ||
+        value.startsWith("/*") ||
+        value.startsWith("*")
+      );
+    }).length;
 
   const functions =
     detectFunctions(
@@ -491,26 +575,16 @@ async function analyzeCode(
 
   return {
     score,
-
     syntax,
-
     tests,
-
     complexity,
-
     issues,
-
     metrics: {
-      lines:
-        lines.length,
-
+      lines: lines.length,
       codeLines,
-
       functions,
-
       comments,
     },
-
     aiReview,
   };
 }
@@ -519,103 +593,99 @@ async function executeTests(
   code: string,
   language: string,
   providedTestCases?: unknown[]
-): Promise<{
-  passed: number;
-  total: number;
-  cases: TestCase[];
-}> {
+) {
   const normalizedLanguage =
-    language
-      .trim()
-      .toLowerCase();
+    language.trim().toLowerCase();
 
-  let testCases: RealTestCase[] =
-    [];
+  const normalizedProvided =
+    Array.isArray(providedTestCases)
+      ? normalizeTestCases(
+          providedTestCases
+        )
+      : [];
 
   if (
-    Array.isArray(
-      providedTestCases
-    ) &&
-    providedTestCases.length > 0
+    normalizedProvided.length > 0
   ) {
-    testCases =
-      normalizeTestCases(
-        providedTestCases
+    const result =
+      await runProgramTests(
+        code,
+        normalizedLanguage,
+        normalizedProvided
       );
-  } else if (
-    normalizedLanguage ===
-      "python" ||
-    normalizedLanguage ===
-      "py"
+
+    return {
+      passed: result.passed,
+      total: result.total,
+      cases: result.cases.map(
+        (test) => ({
+          name: test.name,
+          input: test.input,
+          expected:
+            test.expected,
+          actual: test.actual,
+          status: test.status,
+          runtimeMs:
+            test.runtimeMs,
+        })
+      ),
+    };
+  }
+
+  if (
+    normalizedLanguage === "python"
   ) {
     const functionMatch =
       code.match(
         /^\s*def\s+([a-zA-Z_]\w*)\s*\(/m
       );
 
-    if (!functionMatch) {
-      return {
-        passed: 0,
-        total: 0,
-        cases: [],
-      };
+    if (functionMatch?.[1]) {
+      const generated =
+        generatePythonTests(
+          functionMatch[1]
+        );
+
+      if (generated.length > 0) {
+        const result =
+          await runPythonTests(
+            code,
+            functionMatch[1],
+            generated
+          );
+
+        return {
+          passed: result.passed,
+          total: result.total,
+          cases: result.cases.map(
+            (test) => ({
+              name: test.name,
+              input: test.input,
+              expected:
+                test.expected,
+              actual: test.actual,
+              status:
+                test.status,
+              runtimeMs:
+                test.runtimeMs,
+            })
+          ),
+        };
+      }
     }
-
-    testCases =
-      generatePythonTests(
-        functionMatch[1]
-      );
   }
-
-  if (testCases.length === 0) {
-    return {
-      passed: 0,
-      total: 0,
-      cases: [],
-    };
-  }
-
-  const result =
-    await runProgramTests(
-      code,
-      language,
-      testCases
-    );
 
   return {
-    passed:
-      result.passed,
-
-    total:
-      result.total,
-
-    cases:
-      result.cases.map(
-        (test) => ({
-          name:
-            test.name,
-
-          input:
-            test.input,
-
-          expected:
-            test.expected,
-
-          actual:
-            test.actual,
-
-          status:
-            test.status,
-        })
-      ),
+    passed: 0,
+    total: 0,
+    cases: [],
   };
 }
 
 function normalizeTestCases(
   input: unknown[]
-): RealTestCase[] {
-  const result:
-    RealTestCase[] = [];
+): TestCase[] {
+  const result: TestCase[] = [];
 
   for (const item of input) {
     if (
@@ -634,20 +704,16 @@ function normalizeTestCases(
     if (
       typeof value.name !== "string" ||
       typeof value.input !== "string" ||
-      typeof value.expected !== "string"
+      typeof value.expected !==
+        "string"
     ) {
       continue;
     }
 
     result.push({
-      name:
-        value.name,
-
-      input:
-        value.input,
-
-      expected:
-        value.expected,
+      name: value.name,
+      input: value.input,
+      expected: value.expected,
     });
   }
 
@@ -656,7 +722,7 @@ function normalizeTestCases(
 
 function generatePythonTests(
   functionName: string
-): RealTestCase[] {
+): TestCase[] {
   const name =
     functionName.toLowerCase();
 
@@ -666,28 +732,19 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Positive numbers",
-        input:
-          "[2, 3]",
-        expected:
-          "5",
+        name: "Positive numbers",
+        input: "[2, 3]",
+        expected: "5",
       },
       {
-        name:
-          "Zero values",
-        input:
-          "[0, 0]",
-        expected:
-          "0",
+        name: "Zero values",
+        input: "[0, 0]",
+        expected: "0",
       },
       {
-        name:
-          "Negative and positive",
-        input:
-          "[-2, 5]",
-        expected:
-          "3",
+        name: "Negative and positive",
+        input: "[-2, 5]",
+        expected: "3",
       },
     ];
   }
@@ -698,28 +755,19 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Positive numbers",
-        input:
-          "[2, 3]",
-        expected:
-          "6",
+        name: "Positive numbers",
+        input: "[2, 3]",
+        expected: "6",
       },
       {
-        name:
-          "Zero",
-        input:
-          "[0, 5]",
-        expected:
-          "0",
+        name: "Zero",
+        input: "[0, 5]",
+        expected: "0",
       },
       {
-        name:
-          "Negative number",
-        input:
-          "[-2, 3]",
-        expected:
-          "-6",
+        name: "Negative number",
+        input: "[-2, 3]",
+        expected: "-6",
       },
     ];
   }
@@ -729,28 +777,19 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Positive number",
-        input:
-          "[5]",
-        expected:
-          "25",
+        name: "Positive number",
+        input: "[5]",
+        expected: "25",
       },
       {
-        name:
-          "Zero",
-        input:
-          "[0]",
-        expected:
-          "0",
+        name: "Zero",
+        input: "[0]",
+        expected: "0",
       },
       {
-        name:
-          "Negative number",
-        input:
-          "[-4]",
-        expected:
-          "16",
+        name: "Negative number",
+        input: "[-4]",
+        expected: "16",
       },
     ];
   }
@@ -760,28 +799,19 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Small number",
-        input:
-          "[5]",
-        expected:
-          "120",
+        name: "Small number",
+        input: "[5]",
+        expected: "120",
       },
       {
-        name:
-          "Zero",
-        input:
-          "[0]",
-        expected:
-          "1",
+        name: "Zero",
+        input: "[0]",
+        expected: "1",
       },
       {
-        name:
-          "One",
-        input:
-          "[1]",
-        expected:
-          "1",
+        name: "One",
+        input: "[1]",
+        expected: "1",
       },
     ];
   }
@@ -792,20 +822,14 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Normal array",
-        input:
-          "[[1, 5, 3]]",
-        expected:
-          "5",
+        name: "Normal array",
+        input: "[[1, 5, 3]]",
+        expected: "5",
       },
       {
-        name:
-          "Negative array",
-        input:
-          "[[-5, -2, -8]]",
-        expected:
-          "-2",
+        name: "Negative array",
+        input: "[[-5, -2, -8]]",
+        expected: "-2",
       },
     ];
   }
@@ -816,20 +840,14 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Normal array",
-        input:
-          "[[1, 5, 3]]",
-        expected:
-          "1",
+        name: "Normal array",
+        input: "[[1, 5, 3]]",
+        expected: "1",
       },
       {
-        name:
-          "Negative array",
-        input:
-          "[[-5, -2, -8]]",
-        expected:
-          "-8",
+        name: "Negative array",
+        input: "[[-5, -2, -8]]",
+        expected: "-8",
       },
     ];
   }
@@ -839,20 +857,14 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Normal list",
-        input:
-          "[[1, 2, 3]]",
-        expected:
-          "[3, 2, 1]",
+        name: "Normal list",
+        input: "[[1, 2, 3]]",
+        expected: "[3, 2, 1]",
       },
       {
-        name:
-          "Single element",
-        input:
-          "[[5]]",
-        expected:
-          "[5]",
+        name: "Single element",
+        input: "[[5]]",
+        expected: "[5]",
       },
     ];
   }
@@ -863,20 +875,14 @@ function generatePythonTests(
   ) {
     return [
       {
-        name:
-          "Existing element",
-        input:
-          "[[1, 2, 3, 4, 5], 3]",
-        expected:
-          "2",
+        name: "Existing element",
+        input: "[[1, 2, 3, 4, 5], 3]",
+        expected: "2",
       },
       {
-        name:
-          "Missing element",
-        input:
-          "[[1, 2, 3, 4, 5], 9]",
-        expected:
-          "-1",
+        name: "Missing element",
+        input: "[[1, 2, 3, 4, 5], 9]",
+        expected: "-1",
       },
     ];
   }
@@ -894,8 +900,7 @@ function detectSyntax(
   if (!code.trim()) {
     return {
       status: "failed",
-      message:
-        "Source code is empty.",
+      message: "Source code is empty.",
     };
   }
 
@@ -922,11 +927,8 @@ function detectSyntax(
     }
   }
 
-  if (
-    language === "python"
-  ) {
-    const lines =
-      code.split("\n");
+  if (language === "python") {
+    const lines = code.split("\n");
 
     for (
       let i = 0;
@@ -934,7 +936,7 @@ function detectSyntax(
       i++
     ) {
       const line =
-        lines[i];
+        lines[i] ?? "";
 
       if (
         line.trim().startsWith("def ") &&
@@ -960,9 +962,7 @@ function detectFunctions(
   code: string,
   language: string
 ): number {
-  if (
-    language === "python"
-  ) {
+  if (language === "python") {
     return (
       code.match(
         /^\s*def\s+\w+/gm
@@ -989,11 +989,10 @@ function detectComplexity(
     code.split("\n");
 
   const loopCount =
-    lines.filter(
-      (line) =>
-        /\b(for|while)\b/.test(
-          line
-        )
+    lines.filter((line) =>
+      /\b(for|while)\b/.test(
+        line
+      )
     ).length;
 
   const nestedPattern =
@@ -1023,9 +1022,7 @@ function detectComplexity(
     };
   }
 
-  if (
-    loopCount > 0
-  ) {
+  if (loopCount > 0) {
     return {
       time: "O(n)",
       space: "O(1)",
@@ -1143,9 +1140,7 @@ function calculateScore(
         issue.type === "warning"
     ).length * 7;
 
-  if (
-    tests.total > 0
-  ) {
+  if (tests.total > 0) {
     const ratio =
       tests.passed /
       tests.total;
@@ -1156,18 +1151,14 @@ function calculateScore(
   }
 
   if (
-    complexity.time ===
-    "O(n²)"
+    complexity.time === "O(n²)"
   ) {
     score -= 5;
   }
 
   return Math.max(
     0,
-    Math.min(
-      100,
-      score
-    )
+    Math.min(100, score)
   );
 }
 
@@ -1193,9 +1184,7 @@ function generateReview(
     `Detected time complexity is ${complexity.time} and space complexity is ${complexity.space}.`
   );
 
-  if (
-    tests.total > 0
-  ) {
+  if (tests.total > 0) {
     result.push(
       `${tests.passed} of ${tests.total} real execution tests passed.`
     );
@@ -1205,9 +1194,7 @@ function generateReview(
     );
   }
 
-  if (
-    issues.length > 0
-  ) {
+  if (issues.length > 0) {
     result.push(
       `The analysis identified ${issues.length} potential issue(s) that should be reviewed.`
     );
@@ -1226,14 +1213,14 @@ function generateReview(
 
 app.use(
   (
-    err: Error,
-    _req: Request,
-    res: Response,
-    _next: Function
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
   ) => {
     console.error(err);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message:
         "Internal SmartLab server error.",
@@ -1241,11 +1228,8 @@ app.use(
   }
 );
 
-app.listen(
-  PORT,
-  () => {
-    console.log(
-      `SmartLab API running on http://localhost:${PORT}`
-    );
-  }
-);
+app.listen(PORT, () => {
+  console.log(
+    `SmartLab API running on http://localhost:${PORT}`
+  );
+});

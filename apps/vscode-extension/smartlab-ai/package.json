@@ -4,15 +4,29 @@
   "description": "AI powered smart code review and lab assistant",
   "version": "0.0.1",
   "publisher": "smartlab",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
-  "activationEvents": ["*"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "smartlab-ai.reviewCode",
         "title": "SmartLab: Review Code"
+      },
+      {
+        "command": "smartlab-ai.fixCode",
+        "title": "SmartLab: Fix Code"
+      },
+      {
+        "command": "smartlab-ai.applyFix",
+        "title": "SmartLab: Apply Fix"
       }
     ],
     "viewsContainers": {
