@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -18,64 +20,126 @@ import {
 } from "lucide-react";
 
 import Sidebar from "@/components/Sidebar";
+import { getReviews, type Review } from "@/lib/api";
 
-const recentReviews = [
-  {
-    name: "binary-search.py",
-    language: "Python",
-    score: 86,
-    tests: "8/10",
-    complexity: "O(n)",
-    time: "2 min ago",
-  },
-  {
-    name: "linked-list.cpp",
-    language: "C++",
-    score: 92,
-    tests: "10/10",
-    complexity: "O(n)",
-    time: "18 min ago",
-  },
-  {
-    name: "sorting.js",
-    language: "JavaScript",
-    score: 78,
-    tests: "7/10",
-    complexity: "O(n²)",
-    time: "1 hour ago",
-  },
-  {
-    name: "stack.py",
-    language: "Python",
-    score: 95,
-    tests: "10/10",
-    complexity: "O(1)",
-    time: "3 hours ago",
-  },
-];
+function getRelativeTime(dateString: string) {
+  const date = new Date(dateString);
+  const now = new Date();
 
-const activity = [
-  {
-    title: "Binary Search reviewed",
-    description: "2 issues detected",
-    time: "2 min ago",
-    type: "review",
-  },
-  {
-    title: "Assignment submitted",
-    description: "Data Structures — Lab 04",
-    time: "34 min ago",
-    type: "assignment",
-  },
-  {
-    title: "Test suite completed",
-    description: "10/10 test cases passed",
-    time: "1 hour ago",
-    type: "test",
-  },
-];
+  const diff = Math.max(0, now.getTime() - date.getTime());
+
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 30) return "just now";
+  if (minutes < 1) return `${seconds} sec ago`;
+  if (minutes < 60) return `${minutes} min ago`;
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+
+  return date.toLocaleDateString();
+}
+
+function getLanguageLabel(language: string) {
+  const map: Record<string, string> = {
+    javascript: "JavaScript",
+    js: "JavaScript",
+    typescript: "TypeScript",
+    ts: "TypeScript",
+    python: "Python",
+    py: "Python",
+    cpp: "C++",
+    "c++": "C++",
+    c: "C",
+    java: "Java",
+    go: "Go",
+    rust: "Rust",
+  };
+
+  return map[language.toLowerCase()] || language;
+}
 
 export default function HomePage() {
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+  const [backendError, setBackendError] = useState(false);
+
+  useEffect(() => {
+    async function loadReviews() {
+      try {
+        setLoadingReviews(true);
+        setBackendError(false);
+
+        const data = await getReviews();
+
+        setReviews(data);
+      } catch (error) {
+        console.error("Failed to load reviews:", error);
+        setBackendError(true);
+      } finally {
+        setLoadingReviews(false);
+      }
+    }
+
+    loadReviews();
+  }, []);
+
+  const totalReviews = reviews.length;
+
+  const averageScore =
+    totalReviews > 0
+      ? Math.round(
+          reviews.reduce((sum, review) => sum + review.score, 0) /
+            totalReviews
+        )
+      : 0;
+
+  const totalTests = reviews.reduce(
+    (sum, review) => sum + review.tests.total,
+    0
+  );
+
+  const passedTests = reviews.reduce(
+    (sum, review) => sum + review.tests.passed,
+    0
+  );
+
+  const testsPassedPercentage =
+    totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0;
+
+  const performanceValues = useMemo(() => {
+    if (reviews.length === 0) {
+      return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    }
+
+    const scores = reviews
+      .slice(0, 10)
+      .reverse()
+      .map((review) => review.score);
+
+    if (scores.length >= 10) {
+      return scores;
+    }
+
+    const first = scores[0] ?? averageScore;
+
+    return [
+      ...Array(Math.max(0, 10 - scores.length)).fill(first),
+      ...scores,
+    ];
+  }, [reviews, averageScore]);
+
+  const recentReviews = reviews.slice(0, 4);
+
+  const activity = reviews.slice(0, 4).map((review) => ({
+    title: `${review.fileName} reviewed`,
+    description: `${review.tests.passed}/${review.tests.total} test cases passed`,
+    time: getRelativeTime(review.createdAt),
+    type: "review",
+  }));
+
   return (
     <div className="min-h-screen bg-[#08090b] text-white">
       <Sidebar />
@@ -126,15 +190,18 @@ export default function HomePage() {
                 </h1>
 
                 <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-500">
-                  Review your code, understand mistakes, and improve
-                  your programming skills with intelligent feedback.
+                  Review your code, understand mistakes, and improve your
+                  programming skills with intelligent feedback.
                 </p>
               </div>
 
-              <button className="flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-5 text-sm font-medium text-black transition hover:bg-zinc-200">
+              <Link
+                href="/review"
+                className="flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-5 text-sm font-medium text-black transition hover:bg-zinc-200"
+              >
                 <Plus size={16} />
                 New Review
-              </button>
+              </Link>
             </div>
           </section>
 
@@ -142,33 +209,35 @@ export default function HomePage() {
             <StatCard
               icon={<Code2 size={17} />}
               label="Total Reviews"
-              value="24"
-              change="+12%"
-              description="from last month"
+              value={loadingReviews ? "—" : String(totalReviews)}
+              change={backendError ? "Offline" : "Live"}
+              description="from SmartLab backend"
             />
 
             <StatCard
               icon={<Target size={17} />}
               label="Average Score"
-              value="86%"
-              change="+8%"
-              description="from last month"
+              value={loadingReviews ? "—" : `${averageScore}%`}
+              change="Current"
+              description="across all reviews"
             />
 
             <StatCard
               icon={<CheckCircle2 size={17} />}
               label="Tests Passed"
-              value="91%"
-              change="+5%"
+              value={
+                loadingReviews ? "—" : `${testsPassedPercentage}%`
+              }
+              change="Current"
               description="across all reviews"
             />
 
             <StatCard
               icon={<TrendingUp size={17} />}
               label="Improvement"
-              value="+18%"
-              change="30 days"
-              description="coding performance"
+              value="—"
+              change="Coming"
+              description="requires historical data"
             />
           </section>
 
@@ -185,19 +254,48 @@ export default function HomePage() {
                   </p>
                 </div>
 
-                <button className="flex items-center gap-1 text-xs text-zinc-500 transition hover:text-white">
+                <Link
+                  href="/reviews"
+                  className="flex items-center gap-1 text-xs text-zinc-500 transition hover:text-white"
+                >
                   View all
                   <ChevronRight size={14} />
-                </button>
+                </Link>
               </div>
 
               <div className="divide-y divide-white/[0.06]">
-                {recentReviews.map((review) => (
-                  <ReviewRow
-                    key={review.name}
-                    review={review}
-                  />
-                ))}
+                {loadingReviews ? (
+                  <div className="p-8 text-center text-sm text-zinc-600">
+                    Loading reviews...
+                  </div>
+                ) : backendError ? (
+                  <div className="p-8 text-center">
+                    <div className="text-sm text-zinc-400">
+                      Backend unavailable
+                    </div>
+
+                    <div className="mt-2 text-xs text-zinc-700">
+                      Start the SmartLab server on port 4000.
+                    </div>
+                  </div>
+                ) : recentReviews.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <div className="text-sm text-zinc-400">
+                      No reviews yet
+                    </div>
+
+                    <div className="mt-2 text-xs text-zinc-700">
+                      Create your first code review.
+                    </div>
+                  </div>
+                ) : (
+                  recentReviews.map((review) => (
+                    <ReviewRow
+                      key={review.id}
+                      review={review}
+                    />
+                  ))
+                )}
               </div>
             </div>
 
@@ -220,38 +318,40 @@ export default function HomePage() {
 
               <div className="mt-8 flex items-end gap-3">
                 <span className="text-4xl font-semibold tracking-tight">
-                  86%
+                  {loadingReviews ? "—" : `${averageScore}%`}
                 </span>
 
-                <span className="mb-1 flex items-center gap-1 text-xs text-emerald-400">
-                  <TrendingUp size={12} />
-                  18%
-                </span>
-              </div>
-
-              <div className="mt-6 flex h-28 items-end gap-2">
-                {[42, 55, 48, 63, 58, 72, 68, 81, 76, 86].map(
-                  (height, index) => (
-                    <div
-                      key={index}
-                      className="group relative flex-1"
-                    >
-                      <div
-                        className={`absolute bottom-0 w-full rounded-sm transition ${
-                          index === 9
-                            ? "bg-white"
-                            : "bg-zinc-800 group-hover:bg-zinc-700"
-                        }`}
-                        style={{ height: `${height}%` }}
-                      />
-                    </div>
-                  )
+                {totalReviews > 0 && (
+                  <span className="mb-1 flex items-center gap-1 text-xs text-zinc-500">
+                    <TrendingUp size={12} />
+                    Live
+                  </span>
                 )}
               </div>
 
+              <div className="mt-6 flex h-28 items-end gap-2">
+                {performanceValues.map((height, index) => (
+                  <div
+                    key={index}
+                    className="group relative flex-1"
+                  >
+                    <div
+                      className={`absolute bottom-0 w-full rounded-sm transition ${
+                        index === performanceValues.length - 1
+                          ? "bg-white"
+                          : "bg-zinc-800 group-hover:bg-zinc-700"
+                      }`}
+                      style={{
+                        height: `${Math.max(4, height)}%`,
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
               <div className="mt-3 flex justify-between text-[10px] text-zinc-700">
-                <span>30 days ago</span>
-                <span>Today</span>
+                <span>Oldest</span>
+                <span>Latest</span>
               </div>
             </div>
           </section>
@@ -273,12 +373,18 @@ export default function HomePage() {
               </div>
 
               <div className="mt-6 space-y-5">
-                {activity.map((item, index) => (
-                  <ActivityItem
-                    key={index}
-                    item={item}
-                  />
-                ))}
+                {activity.length === 0 ? (
+                  <div className="py-5 text-sm text-zinc-600">
+                    No recent activity.
+                  </div>
+                ) : (
+                  activity.map((item, index) => (
+                    <ActivityItem
+                      key={index}
+                      item={item}
+                    />
+                  ))
+                )}
               </div>
             </div>
 
@@ -306,16 +412,19 @@ export default function HomePage() {
                 </div>
 
                 <p className="mt-3 text-sm leading-6 text-zinc-500">
-                  Your recent submissions frequently use linear
-                  time complexity. Try identifying cases where
-                  binary search or hashing can reduce complexity.
+                  {totalReviews === 0
+                    ? "Submit your first review to receive complexity insights based on your code."
+                    : "Review your recent submissions and identify cases where a better algorithm or data structure can reduce time complexity."}
                 </p>
               </div>
 
-              <button className="mt-4 flex w-full items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-zinc-400 transition hover:bg-white/[0.04] hover:text-white">
-                Explore recommendations
+              <Link
+                href="/reviews"
+                className="mt-4 flex w-full items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
+              >
+                Explore reviews
                 <ArrowUpRight size={14} />
-              </button>
+              </Link>
             </div>
           </section>
 
@@ -334,18 +443,21 @@ export default function HomePage() {
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <QuickAction
+                href="/review"
                 icon={<Code2 size={17} />}
                 title="Review Code"
                 description="Analyze your current implementation"
               />
 
               <QuickAction
+                href="/reviews"
                 icon={<FileCode2 size={17} />}
-                title="Assignments"
-                description="View your active lab assignments"
+                title="Review History"
+                description="View your previous code reviews"
               />
 
               <QuickAction
+                href="/review"
                 icon={<Terminal size={17} />}
                 title="Test Playground"
                 description="Run and inspect test cases"
@@ -382,7 +494,7 @@ function StatCard({
           {icon}
         </div>
 
-        <span className="text-[11px] text-emerald-400">
+        <span className="text-[11px] text-zinc-500">
           {change}
         </span>
       </div>
@@ -405,30 +517,26 @@ function StatCard({
 function ReviewRow({
   review,
 }: {
-  review: {
-    name: string;
-    language: string;
-    score: number;
-    tests: string;
-    complexity: string;
-    time: string;
-  };
+  review: Review;
 }) {
   return (
-    <div className="group flex items-center gap-4 p-5 transition hover:bg-white/[0.02]">
+    <Link
+      href={`/review/${review.id}`}
+      className="group flex items-center gap-4 p-5 transition hover:bg-white/[0.02]"
+    >
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-zinc-500">
         <FileCode2 size={16} />
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">
-          {review.name}
+          {review.fileName}
         </div>
 
         <div className="mt-1 flex items-center gap-2 text-xs text-zinc-600">
-          <span>{review.language}</span>
+          <span>{getLanguageLabel(review.language)}</span>
           <span>•</span>
-          <span>{review.time}</span>
+          <span>{getRelativeTime(review.createdAt)}</span>
         </div>
       </div>
 
@@ -438,7 +546,7 @@ function ReviewRow({
         </div>
 
         <div className="mt-1 text-sm text-zinc-400">
-          {review.tests}
+          {review.tests.passed}/{review.tests.total}
         </div>
       </div>
 
@@ -462,7 +570,7 @@ function ReviewRow({
         size={15}
         className="text-zinc-700 transition group-hover:text-zinc-400"
       />
-    </div>
+    </Link>
   );
 }
 
@@ -498,16 +606,21 @@ function ActivityItem({
 }
 
 function QuickAction({
+  href,
   icon,
   title,
   description,
 }: {
+  href: string;
   icon: React.ReactNode;
   title: string;
   description: string;
 }) {
   return (
-    <button className="group flex items-center gap-4 rounded-xl border border-white/[0.06] bg-black/20 p-4 text-left transition hover:border-white/[0.12] hover:bg-white/[0.03]">
+    <Link
+      href={href}
+      className="group flex items-center gap-4 rounded-xl border border-white/[0.06] bg-black/20 p-4 text-left transition hover:border-white/[0.12] hover:bg-white/[0.03]"
+    >
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-zinc-500 transition group-hover:text-white">
         {icon}
       </div>
@@ -526,6 +639,6 @@ function QuickAction({
         size={15}
         className="text-zinc-700 transition group-hover:text-zinc-400"
       />
-    </button>
+    </Link>
   );
 }

@@ -1,247 +1,477 @@
 "use client";
 
-import {
-  ArrowUpRight,
-  CheckCircle2,
-  Code2,
-  FileCode2,
-  Filter,
-  Search,
-  SlidersHorizontal,
-  XCircle,
-} from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
-const reviews = [
-  {
-    id: "58a6da47-e1eb-4f2b-8adb-d85ff1a1bb72",
-    file: "binary-search.py",
-    language: "Python",
-    score: 86,
-    passed: 8,
-    total: 10,
-    complexity: "O(n)",
-    status: "Needs attention",
-    time: "2 min ago",
-  },
-  {
-    id: "review-002",
-    file: "linked-list.cpp",
-    language: "C++",
-    score: 92,
-    passed: 10,
-    total: 10,
-    complexity: "O(n)",
-    status: "Passed",
-    time: "18 min ago",
-  },
-  {
-    id: "review-003",
-    file: "sorting.js",
-    language: "JavaScript",
-    score: 78,
-    passed: 7,
-    total: 10,
-    complexity: "O(n²)",
-    status: "Needs attention",
-    time: "1 hour ago",
-  },
-  {
-    id: "review-004",
-    file: "stack.py",
-    language: "Python",
-    score: 95,
-    passed: 10,
-    total: 10,
-    complexity: "O(1)",
-    status: "Passed",
-    time: "3 hours ago",
-  },
-  {
-    id: "review-005",
-    file: "queue.cpp",
-    language: "C++",
-    score: 88,
-    passed: 9,
-    total: 10,
-    complexity: "O(n)",
-    status: "Passed",
-    time: "Yesterday",
-  },
-];
+import {
+  ArrowLeft,
+  Search,
+  Filter,
+  FileCode2,
+  CheckCircle2,
+  Clock3,
+  ChevronRight,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
+
+import Sidebar from "@/components/Sidebar";
+import { getReviews, type Review } from "@/lib/api";
+
+function getLanguageLabel(language: string) {
+  const map: Record<string, string> = {
+    javascript: "JavaScript",
+    js: "JavaScript",
+    typescript: "TypeScript",
+    ts: "TypeScript",
+    python: "Python",
+    py: "Python",
+    cpp: "C++",
+    "c++": "C++",
+    c: "C",
+    java: "Java",
+    go: "Go",
+    rust: "Rust",
+  };
+
+  return map[language.toLowerCase()] || language;
+}
+
+function formatDate(dateString: string) {
+  const date = new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+
+  return date.toLocaleString();
+}
+
+function getScoreClass(score: number) {
+  if (score >= 90) {
+    return "text-emerald-400";
+  }
+
+  if (score >= 70) {
+    return "text-yellow-400";
+  }
+
+  return "text-red-400";
+}
 
 export default function ReviewsPage() {
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("All");
+  const [language, setLanguage] = useState("all");
+  const [scoreFilter, setScoreFilter] = useState("all");
 
-  const filteredReviews = reviews.filter((review) => {
-    const matchesSearch =
-      review.file
-        .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      review.language
-        .toLowerCase()
-        .includes(search.toLowerCase());
+  useEffect(() => {
+    async function loadReviews() {
+      try {
+        setLoading(true);
+        setError("");
 
-    const matchesFilter =
-      filter === "All" ||
-      (filter === "Passed" && review.status === "Passed") ||
-      (filter === "Needs attention" &&
-        review.status === "Needs attention");
+        const data = await getReviews();
 
-    return matchesSearch && matchesFilter;
-  });
+        setReviews(data);
+      } catch (err) {
+        console.error(err);
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load reviews."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadReviews();
+  }, []);
+
+  const languages = useMemo(() => {
+    const values = new Set(
+      reviews.map((review) =>
+        review.language.toLowerCase()
+      )
+    );
+
+    return Array.from(values);
+  }, [reviews]);
+
+  const filteredReviews = useMemo(() => {
+    return reviews.filter((review) => {
+      const matchesSearch =
+        review.fileName
+          .toLowerCase()
+          .includes(
+            search.toLowerCase()
+          );
+
+      const matchesLanguage =
+        language === "all" ||
+        review.language.toLowerCase() ===
+          language.toLowerCase();
+
+      let matchesScore = true;
+
+      if (scoreFilter === "90") {
+        matchesScore = review.score >= 90;
+      }
+
+      if (scoreFilter === "70") {
+        matchesScore =
+          review.score >= 70 &&
+          review.score < 90;
+      }
+
+      if (scoreFilter === "0") {
+        matchesScore = review.score < 70;
+      }
+
+      return (
+        matchesSearch &&
+        matchesLanguage &&
+        matchesScore
+      );
+    });
+  }, [
+    reviews,
+    search,
+    language,
+    scoreFilter,
+  ]);
+
+  const totalReviews = reviews.length;
+
+  const averageScore =
+    reviews.length > 0
+      ? Math.round(
+          reviews.reduce(
+            (sum, review) =>
+              sum + review.score,
+            0
+          ) / reviews.length
+        )
+      : 0;
+
+  const totalPassed =
+    reviews.reduce(
+      (sum, review) =>
+        sum + review.tests.passed,
+      0
+    );
+
+  const totalTests =
+    reviews.reduce(
+      (sum, review) =>
+        sum + review.tests.total,
+      0
+    );
 
   return (
-    <div className="min-h-screen bg-[#08090b] text-white lg:pl-64">
-      <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8">
-        <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-xs text-zinc-600">
-              <span>Workspace</span>
-              <span>/</span>
-              <span>Reviews</span>
+    <div className="min-h-screen bg-[#08090b] text-white">
+
+      <Sidebar />
+
+      <main className="lg:pl-64">
+
+        <header className="sticky top-0 z-40 h-16 border-b border-white/[0.07] bg-[#08090b]/85 backdrop-blur-xl">
+
+          <div className="flex h-full items-center justify-between px-5 sm:px-8">
+
+            <div className="flex items-center gap-3">
+
+              <Link
+                href="/"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] text-zinc-500 transition hover:text-white"
+              >
+                <ArrowLeft size={16} />
+              </Link>
+
+              <div>
+
+                <div className="text-sm font-medium text-zinc-200">
+                  Review History
+                </div>
+
+                <div className="text-xs text-zinc-600">
+                  SmartLab AI
+                </div>
+
+              </div>
+
             </div>
 
-            <h1 className="text-3xl font-semibold tracking-tight">
-              Reviews
+            <Link
+              href="/review"
+              className="flex h-9 items-center gap-2 rounded-lg bg-white px-3 text-xs font-medium text-black transition hover:bg-zinc-200"
+            >
+              <FileCode2 size={14} />
+              New Review
+            </Link>
+
+          </div>
+
+        </header>
+
+        <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8">
+
+          <div className="mb-8">
+
+            <div className="mb-3 text-xs text-zinc-600">
+              SmartLab AI
+            </div>
+
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Review History
             </h1>
 
             <p className="mt-2 text-sm text-zinc-500">
-              Review your previous code submissions and analysis
-              results.
+              Browse previous code analysis results
+              and execution reports.
             </p>
+
           </div>
 
-          <button className="flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-black transition hover:bg-zinc-200">
-            <Code2 size={16} />
-            New Review
-          </button>
-        </div>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
-        <div className="mt-8 grid gap-4 sm:grid-cols-3">
-          <SummaryCard
-            label="Total Reviews"
-            value="24"
-            description="All submissions"
-          />
+            <SummaryCard
+              label="Total Reviews"
+              value={totalReviews}
+              icon={
+                <FileCode2 size={17} />
+              }
+            />
 
-          <SummaryCard
-            label="Average Score"
-            value="86%"
-            description="Across all reviews"
-          />
+            <SummaryCard
+              label="Average Score"
+              value={`${averageScore}%`}
+              icon={
+                <CheckCircle2 size={17} />
+              }
+            />
 
-          <SummaryCard
-            label="Tests Passed"
-            value="91%"
-            description="Overall test success"
-          />
-        </div>
+            <SummaryCard
+              label="Tests Passed"
+              value={`${totalPassed}/${totalTests}`}
+              icon={
+                <CheckCircle2 size={17} />
+              }
+            />
 
-        <div className="mt-6 rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-          <div className="flex flex-col gap-4 border-b border-white/[0.07] p-4 sm:flex-row">
-            <div className="relative flex-1">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600"
-              />
+            <SummaryCard
+              label="Languages"
+              value={languages.length}
+              icon={
+                <Clock3 size={17} />
+              }
+            />
 
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search reviews..."
-                className="h-10 w-full rounded-lg border border-white/[0.07] bg-black/20 pl-9 pr-9 text-sm text-white outline-none placeholder:text-zinc-700 focus:border-white/[0.15]"
-              />
+          </section>
 
-              {search && (
-                <button
-                  onClick={() => setSearch("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-white"
-                >
-                  <XCircle size={15} />
-                </button>
-              )}
+          <section className="mt-6 rounded-2xl border border-white/[0.07] bg-white/[0.025]">
+
+            <div className="border-b border-white/[0.07] p-5">
+
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+                <div>
+
+                  <h2 className="text-sm font-semibold">
+                    All Reviews
+                  </h2>
+
+                  <p className="mt-1 text-xs text-zinc-600">
+                    {filteredReviews.length} reviews
+                  </p>
+
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+
+                  <div className="relative">
+
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600"
+                    />
+
+                    <input
+                      value={search}
+                      onChange={(e) =>
+                        setSearch(
+                          e.target.value
+                        )
+                      }
+                      placeholder="Search files..."
+                      className="h-9 w-full rounded-lg border border-white/[0.07] bg-black/20 pl-9 pr-3 text-xs text-zinc-300 outline-none placeholder:text-zinc-700 focus:border-white/20 sm:w-52"
+                    />
+
+                  </div>
+
+                  <div className="flex items-center gap-2">
+
+                    <Filter
+                      size={14}
+                      className="text-zinc-600"
+                    />
+
+                    <select
+                      value={language}
+                      onChange={(e) =>
+                        setLanguage(
+                          e.target.value
+                        )
+                      }
+                      className="h-9 rounded-lg border border-white/[0.07] bg-[#111317] px-3 text-xs text-zinc-400 outline-none"
+                    >
+
+                      <option value="all">
+                        All languages
+                      </option>
+
+                      {languages.map(
+                        (item) => (
+                          <option
+                            key={item}
+                            value={item}
+                          >
+                            {getLanguageLabel(
+                              item
+                            )}
+                          </option>
+                        )
+                      )}
+
+                    </select>
+
+                    <select
+                      value={scoreFilter}
+                      onChange={(e) =>
+                        setScoreFilter(
+                          e.target.value
+                        )
+                      }
+                      className="h-9 rounded-lg border border-white/[0.07] bg-[#111317] px-3 text-xs text-zinc-400 outline-none"
+                    >
+
+                      <option value="all">
+                        All scores
+                      </option>
+
+                      <option value="90">
+                        90+
+                      </option>
+
+                      <option value="70">
+                        70–89
+                      </option>
+
+                      <option value="0">
+                        Below 70
+                      </option>
+
+                    </select>
+
+                  </div>
+
+                </div>
+
+              </div>
+
             </div>
 
-            <div className="flex gap-2">
-              {["All", "Passed", "Needs attention"].map(
-                (item) => (
-                  <button
-                    key={item}
-                    onClick={() => setFilter(item)}
-                    className={`rounded-lg px-3 py-2 text-xs transition ${
-                      filter === item
-                        ? "bg-white text-black"
-                        : "border border-white/[0.07] bg-white/[0.02] text-zinc-500 hover:text-white"
-                    }`}
-                  >
-                    {item}
-                  </button>
-                )
-              )}
+            {loading && (
+              <div className="flex min-h-[400px] flex-col items-center justify-center">
 
-              <button className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-xs text-zinc-500 hover:text-white">
-                <SlidersHorizontal size={14} />
-                <span className="hidden sm:inline">
-                  Filter
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div className="hidden border-b border-white/[0.07] px-5 py-3 text-[10px] uppercase tracking-[0.15em] text-zinc-700 md:grid md:grid-cols-[1.8fr_0.7fr_0.7fr_0.7fr_0.9fr_20px]">
-            <span>File</span>
-            <span>Score</span>
-            <span>Tests</span>
-            <span>Complexity</span>
-            <span>Status</span>
-            <span />
-          </div>
-
-          <div className="divide-y divide-white/[0.06]">
-            {filteredReviews.length > 0 ? (
-              filteredReviews.map((review) => (
-                <ReviewItem
-                  key={review.id}
-                  review={review}
+                <Loader2
+                  size={22}
+                  className="animate-spin text-zinc-500"
                 />
-              ))
-            ) : (
-              <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.05]">
-                  <Search size={17} className="text-zinc-600" />
-                </div>
 
-                <div className="mt-4 text-sm font-medium">
-                  No reviews found
-                </div>
-
-                <p className="mt-1 text-xs text-zinc-600">
-                  Try changing your search or filter.
+                <p className="mt-4 text-xs text-zinc-600">
+                  Loading review history...
                 </p>
+
               </div>
             )}
-          </div>
+
+            {!loading && error && (
+              <div className="flex min-h-[400px] flex-col items-center justify-center px-5 text-center">
+
+                <AlertCircle
+                  size={22}
+                  className="text-red-400"
+                />
+
+                <h3 className="mt-4 text-sm font-medium text-red-300">
+                  Unable to load reviews
+                </h3>
+
+                <p className="mt-2 max-w-md text-xs leading-5 text-zinc-600">
+                  {error}
+                </p>
+
+              </div>
+            )}
+
+            {!loading &&
+              !error &&
+              filteredReviews.length === 0 && (
+                <div className="flex min-h-[400px] flex-col items-center justify-center px-5 text-center">
+
+                  <FileCode2
+                    size={24}
+                    className="text-zinc-700"
+                  />
+
+                  <h3 className="mt-4 text-sm font-medium text-zinc-400">
+                    No reviews found
+                  </h3>
+
+                  <p className="mt-2 max-w-md text-xs leading-5 text-zinc-700">
+                    Try changing your filters or
+                    create a new code review.
+                  </p>
+
+                  <Link
+                    href="/review"
+                    className="mt-5 rounded-lg bg-white px-4 py-2 text-xs font-medium text-black transition hover:bg-zinc-200"
+                  >
+                    Create Review
+                  </Link>
+
+                </div>
+              )}
+
+            {!loading &&
+              !error &&
+              filteredReviews.length > 0 && (
+                <div className="divide-y divide-white/[0.05]">
+
+                  {filteredReviews.map(
+                    (review) => (
+                      <ReviewRow
+                        key={review.id}
+                        review={review}
+                      />
+                    )
+                  )}
+
+                </div>
+              )}
+
+          </section>
+
         </div>
 
-        <div className="mt-6 flex items-center justify-between text-xs text-zinc-700">
-          <span>
-            Showing {filteredReviews.length} of {reviews.length}{" "}
-            reviews
-          </span>
+      </main>
 
-          <div className="flex items-center gap-2">
-            <button className="rounded-lg border border-white/[0.06] px-3 py-2 hover:text-white">
-              Previous
-            </button>
-
-            <button className="rounded-lg border border-white/[0.06] px-3 py-2 hover:text-white">
-              Next
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -249,109 +479,159 @@ export default function ReviewsPage() {
 function SummaryCard({
   label,
   value,
-  description,
+  icon,
 }: {
   label: string;
-  value: string;
-  description: string;
+  value: string | number;
+  icon: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-      <div className="text-xs text-zinc-600">
+
+      <div className="flex items-center gap-2 text-xs text-zinc-600">
+
+        {icon}
+
         {label}
+
       </div>
 
-      <div className="mt-3 text-3xl font-semibold tracking-tight">
+      <div className="mt-4 text-2xl font-semibold">
         {value}
       </div>
 
-      <div className="mt-1 text-xs text-zinc-700">
-        {description}
-      </div>
     </div>
   );
 }
 
-function ReviewItem({
+function ReviewRow({
   review,
 }: {
-  review: {
-    id: string;
-    file: string;
-    language: string;
-    score: number;
-    passed: number;
-    total: number;
-    complexity: string;
-    status: string;
-    time: string;
-  };
+  review: Review;
 }) {
-  const reviewUrl = `/review/${review.id}`;
+  const passed =
+    review.tests.passed;
+
+  const total =
+    review.tests.total;
+
+  const allPassed =
+    total > 0 &&
+    passed === total;
 
   return (
-    <a
-      href={reviewUrl}
+    <Link
+      href={`/review/${review.id}`}
       className="group block px-5 py-5 transition hover:bg-white/[0.02]"
     >
-      <div className="grid items-center gap-4 md:grid-cols-[1.8fr_0.7fr_0.7fr_0.7fr_0.9fr_20px]">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-zinc-500">
-            <FileCode2 size={16} />
+
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
+        <div className="flex min-w-0 items-center gap-4">
+
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-black/20 text-zinc-500">
+
+            <FileCode2 size={17} />
+
           </div>
 
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-zinc-200">
-              {review.file}
+
+            <div className="truncate text-sm font-medium text-zinc-300 group-hover:text-white">
+              {review.fileName}
             </div>
 
-            <div className="mt-1 text-xs text-zinc-700">
-              {review.language} · {review.time}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-700">
+
+              <span>
+                {getLanguageLabel(
+                  review.language
+                )}
+              </span>
+
+              <span>•</span>
+
+              <span>
+                {formatDate(
+                  review.createdAt
+                )}
+              </span>
+
             </div>
+
           </div>
+
         </div>
 
-        <div className="text-sm font-semibold">
-          {review.score}%
+        <div className="flex flex-wrap items-center gap-6">
+
+          <div>
+
+            <div className="text-[10px] uppercase tracking-wider text-zinc-700">
+              Score
+            </div>
+
+            <div
+              className={`mt-1 text-sm font-semibold ${getScoreClass(
+                review.score
+              )}`}
+            >
+              {review.score}%
+            </div>
+
+          </div>
+
+          <div>
+
+            <div className="text-[10px] uppercase tracking-wider text-zinc-700">
+              Tests
+            </div>
+
+            <div
+              className={`mt-1 flex items-center gap-1 text-sm font-medium ${
+                allPassed
+                  ? "text-emerald-400"
+                  : "text-yellow-400"
+              }`}
+            >
+
+              {allPassed ? (
+                <CheckCircle2
+                  size={13}
+                />
+              ) : (
+                <AlertCircle
+                  size={13}
+                />
+              )}
+
+              {passed}/{total}
+
+            </div>
+
+          </div>
+
+          <div>
+
+            <div className="text-[10px] uppercase tracking-wider text-zinc-700">
+              Complexity
+            </div>
+
+            <div className="mt-1 font-mono text-sm text-zinc-400">
+              {review.complexity}
+            </div>
+
+          </div>
+
+          <ChevronRight
+            size={16}
+            className="text-zinc-700 transition group-hover:translate-x-0.5 group-hover:text-zinc-400"
+          />
+
         </div>
 
-        <div className="flex items-center gap-1.5 text-sm text-zinc-400">
-          {review.passed === review.total ? (
-            <CheckCircle2
-              size={14}
-              className="text-emerald-400"
-            />
-          ) : (
-            <XCircle
-              size={14}
-              className="text-amber-400"
-            />
-          )}
-
-          {review.passed}/{review.total}
-        </div>
-
-        <div className="font-mono text-sm text-zinc-500">
-          {review.complexity}
-        </div>
-
-        <div>
-          <span
-            className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-medium ${
-              review.status === "Passed"
-                ? "bg-emerald-500/10 text-emerald-400"
-                : "bg-amber-500/10 text-amber-400"
-            }`}
-          >
-            {review.status}
-          </span>
-        </div>
-
-        <ArrowUpRight
-          size={15}
-          className="text-zinc-700 transition group-hover:text-white"
-        />
       </div>
-    </a>
+
+    </Link>
   );
 }

@@ -4,12 +4,10 @@
     {
       "type": "npm",
       "script": "compile",
-      "problemMatcher": "$tsc",
+      "group": "build",
+      "problemMatcher": ["$tsc"],
       "label": "npm: compile",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
+      "detail": "tsc -p ./"
     }
   ]
 }
